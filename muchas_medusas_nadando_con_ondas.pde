@@ -69,41 +69,53 @@ void mouseMoved() {
 // ============================================
 // SISTEMA DE FLUIDO CON MALLA DE RESORTES
 // ============================================
-
-
+// ============================================================
+// OPTION B: Contour (isolines) ripple rings + optional subtle mesh
+// Drop-in replacement for your Fluido class.
+// Physics + API unchanged.
+// ============================================================
+// ============================================================
+// OPTION A: Height-tinted mesh + ripple sparkle points
+// Drop-in replacement for your Fluido class.
+// Physics + API unchanged: actualizar(), dibujar(), perturbar(),
+// obtenerVelocidad(), obtenerAltura().
+// ============================================================
 class Fluido {
   int cols, filas;
   float espaciado;
   Particula[][] particulas;
   ArrayList<Resorte> resortes;
 
-  // --- Fields needed across methods (FIXED) ---
+  // mesh placement
   float offsetX, offsetY;
 
-  // --- Parameters (kept compatible with your current usage) ---
+  // physics parameters (same semantics as your current code)
   float rigidez = 0.1;
-  float propagacion = 0.04;   // smoothing strength for vy propagation
-  float waveDrag = 0.015;     // global damping for propagation step
+  float propagacion = 0.04;
+  float waveDrag = 0.015;
 
-  // Reusable buffer (no per-frame allocations)
+  // reusable buffer for wave propagation
   float[][] tmpVy;
+
+  // --- render-only helpers (no physics changes) ---
+  PGraphics floorTex;  // subtle "pond bottom" texture (procedural)
+  float floorScroll = 0;  // tiny drift effect for the texture
+  // ----------------------------------------------
 
   Fluido(int c, int f, float esp) {
     cols = c;
     filas = f;
     espaciado = esp;
 
-    // Compute mesh dimensions
     float anchoMalla = cols * espaciado;
     float altoMalla  = filas * espaciado;
 
-    // Center mesh on screen (stored as fields!)
     offsetX = (width  - anchoMalla) / 2.0;
     offsetY = (height - altoMalla)  / 2.0;
 
     tmpVy = new float[cols][filas];
 
-    // Create particles
+    // create particles at each grid point
     particulas = new Particula[cols][filas];
     for (int i = 0; i < cols; i++) {
       for (int j = 0; j < filas; j++) {
@@ -113,23 +125,16 @@ class Fluido {
       }
     }
 
-    // Create springs
+    // create springs connecting particles
     resortes = new ArrayList<Resorte>();
-
     for (int i = 0; i < cols; i++) {
       for (int j = 0; j < filas; j++) {
-
-        // Horizontal spring
         if (i < cols - 1) {
           resortes.add(new Resorte(particulas[i][j], particulas[i + 1][j], rigidez));
         }
-
-        // Vertical spring
         if (j < filas - 1) {
           resortes.add(new Resorte(particulas[i][j], particulas[i][j + 1], rigidez));
         }
-
-        // Diagonals for stability (kept from your code)
         if (i < cols - 1 && j < filas - 1) {
           float kd = rigidez * 0.7;
           resortes.add(new Resorte(particulas[i][j],     particulas[i + 1][j + 1], kd));
@@ -137,25 +142,63 @@ class Fluido {
         }
       }
     }
+
+    // create and fill the bottom texture
+    floorTex = createGraphics((int)(cols * espaciado), (int)(filas * espaciado));
+    generarTexturaFondo();
   }
 
+  // Fills the floorTex with a pebble-like pattern (procedural).
+  void generarTexturaFondo() {
+    floorTex.beginDraw();
+    floorTex.noStroke();
+    floorTex.background(245);  // light base colour
+
+    floorTex.loadPixels();
+    int w = floorTex.width;
+    int h = floorTex.height;
+    float ns = 0.018;
+    for (int y = 0; y < h; y++) {
+      for (int x = 0; x < w; x++) {
+        float n  = noise(x * ns, y * ns);
+        float n2 = noise(1000 + x * ns * 2.2, 2000 + y * ns * 2.2);
+        float v  = 0.65 * n + 0.35 * n2;
+
+        int r = (int)lerp(232, 248, v);
+        int g = (int)lerp(228, 246, v);
+        int b = (int)lerp(224, 244, v);
+        floorTex.pixels[y * w + x] = color(r, g, b);
+      }
+    }
+    floorTex.updatePixels();
+
+    // a few subtle darker spots to add variation
+    for (int k = 0; k < 140; k++) {
+      float x = random(w);
+      float y = random(h);
+      float rr = random(6, 18);
+      floorTex.fill(0, 10);
+      floorTex.ellipse(x, y, rr, rr);
+    }
+
+    floorTex.endDraw();
+  }
+
+  // Advances the physics by substeps (spring forces, particle updates, wave propagation).
   void actualizar() {
-    // Kept: substeps for stability
     int sub = 2;
     for (int s = 0; s < sub; s++) {
       for (Resorte r : resortes) r.actualizar();
-
       for (int i = 0; i < cols; i++) {
         for (int j = 0; j < filas; j++) {
           particulas[i][j].actualizar();
         }
       }
-
       propagarOndas();
     }
   }
 
-  // Stable, cheap propagation: move vy slightly toward neighbor average
+  // Wave propagation (4-neighbour averaging).
   void propagarOndas() {
     for (int i = 1; i < cols - 1; i++) {
       for (int j = 1; j < filas - 1; j++) {
@@ -165,11 +208,9 @@ class Fluido {
 
         float nv = v + (av - v) * propagacion;
         nv *= (1.0 - waveDrag);
-
         tmpVy[i][j] = nv;
       }
     }
-
     for (int i = 1; i < cols - 1; i++) {
       for (int j = 1; j < filas - 1; j++) {
         particulas[i][j].vy = tmpVy[i][j];
@@ -177,7 +218,7 @@ class Fluido {
     }
   }
 
-  // Faster: only check particles in bounding box around the radius
+  // Adds a radial perturbation to the velocity field (interactive click/drag).
   void perturbar(float x, float y, float radio, float fuerza) {
     float gx = (x - offsetX) / espaciado;
     float gy = (y - offsetY) / espaciado;
@@ -201,7 +242,6 @@ class Fluido {
           float d = sqrt(d2);
           float intensidad = fuerza * (1.0 - d / radio);
 
-          // Same semantics as your version: push vertically + slight radial x
           p.vy += intensidad;
           float angulo = atan2(y - p.y, x - p.x);
           p.vx += cos(angulo) * intensidad * 0.3;
@@ -210,39 +250,140 @@ class Fluido {
     }
   }
 
-  void dibujar() {
-    stroke(0, 30, 100, 30);
+  // Adds a directional wake (for worm motion) to the velocity field.
+  void perturbarDir(float x, float y, float radio, float dirX, float dirY, float fuerza) {
+    float m = sqrt(dirX*dirX + dirY*dirY);
+    if (m < 1e-6) return;
+    dirX /= m;
+    dirY /= m;
 
-    // Horizontal lines
-    for (int i = 0; i < cols - 1; i++) {
-      for (int j = 0; j < filas; j++) {
-        Particula p1 = particulas[i][j];
-        Particula p2 = particulas[i + 1][j];
-        line(p1.x, p1.y, p2.x, p2.y);
-      }
-    }
+    float f = constrain(fuerza, -25, 25);
+    float r = max(1, radio);
 
-    // Vertical lines
-    for (int i = 0; i < cols; i++) {
-      for (int j = 0; j < filas - 1; j++) {
-        Particula p1 = particulas[i][j];
-        Particula p2 = particulas[i][j + 1];
-        line(p1.x, p1.y, p2.x, p2.y);
-      }
-    }
+    float gx = (x - offsetX) / espaciado;
+    float gy = (y - offsetY) / espaciado;
+    float gr = r / espaciado;
 
-    // Points (kept)
-    fill(0, 50, 150, 50);
-    noStroke();
-    for (int i = 0; i < cols; i++) {
-      for (int j = 0; j < filas; j++) {
+    int iMin = constrain(floor(gx - gr) - 1, 0, cols - 1);
+    int iMax = constrain(ceil (gx + gr) + 1, 0, cols - 1);
+    int jMin = constrain(floor(gy - gr) - 1, 0, filas - 1);
+    int jMax = constrain(ceil (gy + gr) + 1, 0, filas - 1);
+
+    float r2 = r * r;
+
+    for (int i = iMin; i <= iMax; i++) {
+      for (int j = jMin; j <= jMax; j++) {
         Particula p = particulas[i][j];
-        ellipse(p.x, p.y, 2, 2);
+        float dx = x - p.x;
+        float dy = y - p.y;
+        float d2 = dx*dx + dy*dy;
+        if (d2 < r2) {
+          float d = sqrt(d2);
+          float w = 1.0 - d / r;
+          w *= w;
+
+          float push = f * w;
+          p.vx += dirX * push;
+          p.vy += dirY * push;
+
+          // small vertical bias to create ring ripples
+          p.vy += push * 0.08;
+        }
       }
     }
   }
 
-  // Bilinear sampling (smooth flow)
+  // Renders the water surface as a smooth translucent sheet with highlights.
+  void dibujar() {
+    float w = cols * espaciado;
+    float h = filas * espaciado;
+
+    pushStyle();
+    // clip the rendering to the fluid rectangle so texture doesn't spill out
+    clip((int)offsetX, (int)offsetY, (int)w, (int)h);
+
+    // draw the bottom texture with a subtle drift (visual only)
+    floorScroll += 0.15;
+    float sx = offsetX + sin(floorScroll * 0.004) * 6;
+    float sy = offsetY + cos(floorScroll * 0.003) * 6;
+
+    tint(255, 110);
+    image(floorTex, sx, sy);
+    noTint();
+
+    // shading parameters (tweak for different looks)
+    float hScale     = 1.0;   // visual height multiplier (does not change physics)
+    float baseAlpha  = 42;    // base opacity of water
+    float alphaGain  = 10;    // extra opacity from height magnitude
+    float slopeGain  = 120;   // highlight strength based on slope
+    float crestPow   = 1.7;   // controls highlight sharpness
+
+    noStroke();
+    // draw as triangle strips to avoid visible grid lines
+    for (int j = 0; j < filas - 1; j++) {
+      beginShape(TRIANGLE_STRIP);
+      for (int i = 0; i < cols; i++) {
+        Particula p0 = particulas[i][j];
+        Particula p1 = particulas[i][j + 1];
+
+        // height deviations from the original position
+        float h0 = (p0.y - p0.oy) * hScale;
+        float h1 = (p1.y - p1.oy) * hScale;
+
+        // slope estimates for highlight intensity
+        float s0 = slopeAt(i, j) * hScale;
+        float s1 = slopeAt(i, j + 1) * hScale;
+
+        // base opacity from height magnitude
+        float a0 = baseAlpha + abs(h0) * alphaGain;
+        float a1 = baseAlpha + abs(h1) * alphaGain;
+
+        // highlight intensity from slope
+        float hl0 = pow(constrain(s0 * 0.12, 0, 1), crestPow) * slopeGain;
+        float hl1 = pow(constrain(s1 * 0.12, 0, 1), crestPow) * slopeGain;
+
+        // final colour and alpha: subtle pond tint + highlight
+        fill(40 + hl0 * 0.25, 120 + hl0 * 0.35, 150 + hl0 * 0.55, constrain(a0 + hl0, 0, 140));
+        vertex(p0.x, p0.y);
+
+        fill(40 + hl1 * 0.25, 120 + hl1 * 0.35, 150 + hl1 * 0.55, constrain(a1 + hl1, 0, 140));
+        vertex(p1.x, p1.y);
+      }
+      endShape();
+    }
+
+    // optional: soft sheen overlay to evoke reflection
+    noStroke();
+    for (int k = 0; k < 7; k++) {
+      float yBand = offsetY + (k / 6.0) * h;
+      float a = 10 - k;
+      fill(255, a);
+      rect(offsetX, yBand, w, h / 12.0);
+    }
+
+    noClip();
+    popStyle();
+  }
+
+  // Computes the magnitude of the height gradient at grid point (i,j).
+  // Used to decide where highlights (wave crests) should be drawn.
+  float slopeAt(int i, int j) {
+    int im1 = max(0, i - 1);
+    int ip1 = min(cols - 1, i + 1);
+    int jm1 = max(0, j - 1);
+    int jp1 = min(filas - 1, j + 1);
+
+    float hL = particulas[im1][j].y - particulas[im1][j].oy;
+    float hR = particulas[ip1][j].y - particulas[ip1][j].oy;
+    float hU = particulas[i][jm1].y - particulas[i][jm1].oy;
+    float hD = particulas[i][jp1].y - particulas[i][jp1].oy;
+
+    float dx = (hR - hL) / (2.0 * espaciado);
+    float dy = (hD - hU) / (2.0 * espaciado);
+    return sqrt(dx*dx + dy*dy);
+  }
+
+  // Bilinearly interpolates the velocity field at an arbitrary (x,y) position.
   PVector obtenerVelocidad(float x, float y) {
     float gx = (x - offsetX) / espaciado;
     float gy = (y - offsetY) / espaciado;
@@ -268,7 +409,7 @@ class Fluido {
     return new PVector(lerp(vx0, vx1, sy), lerp(vy0, vy1, sy));
   }
 
-  // Bilinear height sampling (rest deviation)
+  // Bilinearly interpolates the height field (deviation from rest) at (x,y).
   float obtenerAltura(float x, float y) {
     float gx = (x - offsetX) / espaciado;
     float gy = (y - offsetY) / espaciado;
@@ -291,7 +432,6 @@ class Fluido {
     return lerp(h0, h1, sy);
   }
 }
-
 class Particula {
   float x, y;      // Posición actual
   float vx, vy;    // Velocidad

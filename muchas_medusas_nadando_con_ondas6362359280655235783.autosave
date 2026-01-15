@@ -1,0 +1,629 @@
+ArrayList<Gusano> gusanos;
+Fluido fluido;  // Nuevo sistema de fluido
+int numGusanos = 4;
+int numSegmentos = 30;
+float velocidad = 4;
+float suavidad = 0.15;
+
+float t = 0;
+
+void setup() {
+  size(1280, 800);
+  stroke(0, 66);
+  background(255);
+  
+  // Inicializar el sistema de fluido
+  fluido = new Fluido(60, 50, 20); // Ancho, alto, espaciado de la malla
+  
+  // Inicializar los gusanos
+  gusanos = new ArrayList<Gusano>();
+  
+  // Crear varios gusanos en posiciones aleatorias
+  for (int i = 0; i < numGusanos; i++) {
+    float x = random(200, width-200);
+    float y = random(200, height-200);
+    color c = color(0, 66);
+    gusanos.add(new Gusano(x, y, c, i));
+  }
+}
+
+void draw() {
+  background(255);
+  t += PI / 20;
+  
+  // Actualizar el fluido
+  fluido.actualizar();
+  
+  // Dibujar el fluido (semi-transparente)
+  fluido.dibujar();
+  
+  // Actualizar y dibujar todos los gusanos
+  for (Gusano gusano : gusanos) {
+    gusano.actualizar();
+    gusano.dibujarForma();
+  }
+  
+  //// Mostrar instrucciones
+  //fill(0);
+  //text("Mueve el mouse sobre el agua para crear ondas", 10, 20);
+  //text("Presiona y arrastra para crear ondas más grandes", 10, 40);
+}
+
+void mouseDragged() {
+  // Crear una perturbación en el fluido cuando se arrastra el mouse
+  fluido.perturbar(mouseX, mouseY, 80, 5.0);
+}
+
+void mousePressed() {
+  // Crear una pequeña perturbación cuando se hace click
+  fluido.perturbar(mouseX, mouseY, 50, 3.0);
+}
+
+void mouseMoved() {
+  // Crear pequeñas ondas cuando el mouse se mueve
+  if (frameCount % 3 == 0) {
+    fluido.perturbar(mouseX, mouseY, 30, 1.5);
+  }
+}
+
+// ============================================
+// SISTEMA DE FLUIDO CON MALLA DE RESORTES
+// ============================================
+
+
+class Fluido {
+  int cols, filas;
+  float espaciado;
+  Particula[][] particulas;
+  ArrayList<Resorte> resortes;
+
+  // --- Fields needed across methods (FIXED) ---
+  float offsetX, offsetY;
+
+  // --- Parameters (kept compatible with your current usage) ---
+  float rigidez = 0.1;
+  float propagacion = 0.04;   // smoothing strength for vy propagation
+  float waveDrag = 0.015;     // global damping for propagation step
+
+  // Reusable buffer (no per-frame allocations)
+  float[][] tmpVy;
+
+  Fluido(int c, int f, float esp) {
+    cols = c;
+    filas = f;
+    espaciado = esp;
+
+    // Compute mesh dimensions
+    float anchoMalla = cols * espaciado;
+    float altoMalla  = filas * espaciado;
+
+    // Center mesh on screen (stored as fields!)
+    offsetX = (width  - anchoMalla) / 2.0;
+    offsetY = (height - altoMalla)  / 2.0;
+
+    tmpVy = new float[cols][filas];
+
+    // Create particles
+    particulas = new Particula[cols][filas];
+    for (int i = 0; i < cols; i++) {
+      for (int j = 0; j < filas; j++) {
+        float x = offsetX + i * espaciado;
+        float y = offsetY + j * espaciado;
+        particulas[i][j] = new Particula(x, y);
+      }
+    }
+
+    // Create springs
+    resortes = new ArrayList<Resorte>();
+
+    for (int i = 0; i < cols; i++) {
+      for (int j = 0; j < filas; j++) {
+
+        // Horizontal spring
+        if (i < cols - 1) {
+          resortes.add(new Resorte(particulas[i][j], particulas[i + 1][j], rigidez));
+        }
+
+        // Vertical spring
+        if (j < filas - 1) {
+          resortes.add(new Resorte(particulas[i][j], particulas[i][j + 1], rigidez));
+        }
+
+        // Diagonals for stability (kept from your code)
+        if (i < cols - 1 && j < filas - 1) {
+          float kd = rigidez * 0.7;
+          resortes.add(new Resorte(particulas[i][j],     particulas[i + 1][j + 1], kd));
+          resortes.add(new Resorte(particulas[i + 1][j], particulas[i][j + 1],     kd));
+        }
+      }
+    }
+  }
+
+  void actualizar() {
+    // Kept: substeps for stability
+    int sub = 2;
+    for (int s = 0; s < sub; s++) {
+      for (Resorte r : resortes) r.actualizar();
+
+      for (int i = 0; i < cols; i++) {
+        for (int j = 0; j < filas; j++) {
+          particulas[i][j].actualizar();
+        }
+      }
+
+      propagarOndas();
+    }
+  }
+
+  // Stable, cheap propagation: move vy slightly toward neighbor average
+  void propagarOndas() {
+    for (int i = 1; i < cols - 1; i++) {
+      for (int j = 1; j < filas - 1; j++) {
+        float v  = particulas[i][j].vy;
+        float av = (particulas[i - 1][j].vy + particulas[i + 1][j].vy +
+                    particulas[i][j - 1].vy + particulas[i][j + 1].vy) * 0.25;
+
+        float nv = v + (av - v) * propagacion;
+        nv *= (1.0 - waveDrag);
+
+        tmpVy[i][j] = nv;
+      }
+    }
+
+    for (int i = 1; i < cols - 1; i++) {
+      for (int j = 1; j < filas - 1; j++) {
+        particulas[i][j].vy = tmpVy[i][j];
+      }
+    }
+  }
+
+  // Faster: only check particles in bounding box around the radius
+  void perturbar(float x, float y, float radio, float fuerza) {
+    float gx = (x - offsetX) / espaciado;
+    float gy = (y - offsetY) / espaciado;
+    float gr = radio / espaciado;
+
+    int iMin = constrain(floor(gx - gr) - 1, 0, cols - 1);
+    int iMax = constrain(ceil (gx + gr) + 1, 0, cols - 1);
+    int jMin = constrain(floor(gy - gr) - 1, 0, filas - 1);
+    int jMax = constrain(ceil (gy + gr) + 1, 0, filas - 1);
+
+    float r2 = radio * radio;
+
+    for (int i = iMin; i <= iMax; i++) {
+      for (int j = jMin; j <= jMax; j++) {
+        Particula p = particulas[i][j];
+        float dx = x - p.x;
+        float dy = y - p.y;
+        float d2 = dx * dx + dy * dy;
+
+        if (d2 < r2) {
+          float d = sqrt(d2);
+          float intensidad = fuerza * (1.0 - d / radio);
+
+          // Same semantics as your version: push vertically + slight radial x
+          p.vy += intensidad;
+          float angulo = atan2(y - p.y, x - p.x);
+          p.vx += cos(angulo) * intensidad * 0.3;
+        }
+      }
+    }
+  }
+
+  void dibujar() {
+    stroke(0, 30, 100, 30);
+
+    // Horizontal lines
+    for (int i = 0; i < cols - 1; i++) {
+      for (int j = 0; j < filas; j++) {
+        Particula p1 = particulas[i][j];
+        Particula p2 = particulas[i + 1][j];
+        line(p1.x, p1.y, p2.x, p2.y);
+      }
+    }
+
+    // Vertical lines
+    for (int i = 0; i < cols; i++) {
+      for (int j = 0; j < filas - 1; j++) {
+        Particula p1 = particulas[i][j];
+        Particula p2 = particulas[i][j + 1];
+        line(p1.x, p1.y, p2.x, p2.y);
+      }
+    }
+
+    // Points (kept)
+    fill(0, 50, 150, 50);
+    noStroke();
+    for (int i = 0; i < cols; i++) {
+      for (int j = 0; j < filas; j++) {
+        Particula p = particulas[i][j];
+        ellipse(p.x, p.y, 2, 2);
+      }
+    }
+  }
+
+  // Bilinear sampling (smooth flow)
+  PVector obtenerVelocidad(float x, float y) {
+    float gx = (x - offsetX) / espaciado;
+    float gy = (y - offsetY) / espaciado;
+
+    int i0 = constrain(floor(gx), 0, cols - 1);
+    int j0 = constrain(floor(gy), 0, filas - 1);
+    int i1 = constrain(i0 + 1, 0, cols - 1);
+    int j1 = constrain(j0 + 1, 0, filas - 1);
+
+    float sx = gx - i0;
+    float sy = gy - j0;
+
+    Particula p00 = particulas[i0][j0];
+    Particula p10 = particulas[i1][j0];
+    Particula p01 = particulas[i0][j1];
+    Particula p11 = particulas[i1][j1];
+
+    float vx0 = lerp(p00.vx, p10.vx, sx);
+    float vx1 = lerp(p01.vx, p11.vx, sx);
+    float vy0 = lerp(p00.vy, p10.vy, sx);
+    float vy1 = lerp(p01.vy, p11.vy, sx);
+
+    return new PVector(lerp(vx0, vx1, sy), lerp(vy0, vy1, sy));
+  }
+
+  // Bilinear height sampling (rest deviation)
+  float obtenerAltura(float x, float y) {
+    float gx = (x - offsetX) / espaciado;
+    float gy = (y - offsetY) / espaciado;
+
+    int i0 = constrain(floor(gx), 0, cols - 1);
+    int j0 = constrain(floor(gy), 0, filas - 1);
+    int i1 = constrain(i0 + 1, 0, cols - 1);
+    int j1 = constrain(j0 + 1, 0, filas - 1);
+
+    float sx = gx - i0;
+    float sy = gy - j0;
+
+    float h00 = particulas[i0][j0].y - particulas[i0][j0].oy;
+    float h10 = particulas[i1][j0].y - particulas[i1][j0].oy;
+    float h01 = particulas[i0][j1].y - particulas[i0][j1].oy;
+    float h11 = particulas[i1][j1].y - particulas[i1][j1].oy;
+
+    float h0 = lerp(h00, h10, sx);
+    float h1 = lerp(h01, h11, sx);
+    return lerp(h0, h1, sy);
+  }
+}
+
+class Particula {
+  float x, y;      // Posición actual
+  float vx, vy;    // Velocidad
+  float ox, oy;    // Posición original (reposo)
+  
+  Particula(float x_, float y_) {
+    x = ox = x_;
+    y = oy = y_;
+    vx = vy = 0;
+  }
+  
+  void actualizar() {
+    // Aplicar velocidad
+    x += vx;
+    y += vy;
+    
+    // Fuerza de restitución (queremos volver a la posición original)
+    float fx = (ox - x) * 0.08;
+    float fy = (oy - y) * 0.05;
+    
+    // Aplicar fuerza
+    vx += fx;
+    vy += fy;
+    
+    // Amortiguación
+    vx *= 0.975;
+    vy *= 0.985;
+    
+    // Limitar movimiento excesivo
+    float maxMov = 10;
+    x = constrain(x, ox - maxMov, ox + maxMov);
+    y = constrain(y, oy - maxMov, oy + maxMov);
+  }
+}
+
+class Resorte {
+  Particula a, b;
+  float longitudReposo;
+  float rigidez;
+  
+  Resorte(Particula a_, Particula b_, float rigidez_) {
+    a = a_;
+    b = b_;
+    rigidez = rigidez_;
+    longitudReposo = dist(a.x, a.y, b.x, b.y);
+  }
+  
+  void actualizar() {
+    // Calcular distancia actual
+    float dx = b.x - a.x;
+    float dy = b.y - a.y;
+    float distancia = sqrt(dx*dx + dy*dy);
+    
+    if (distancia > 0) {
+      // Calcular fuerza según ley de Hooke: F = -k * (x - L)
+      float fuerza = rigidez * (distancia - longitudReposo);
+      
+      // Normalizar vector de dirección
+      dx /= distancia;
+      dy /= distancia;
+      
+      // Aplicar fuerza a ambas partículas
+      a.vx += dx * fuerza * 0.5;
+      a.vy += dy * fuerza * 0.5;
+      b.vx -= dx * fuerza * 0.5;
+      b.vy -= dy * fuerza * 0.5;
+    }
+  }
+}
+
+// ============================================
+// CLASE GUSANO MODIFICADA PARA INTERACTUAR CON EL FLUIDO
+// ============================================
+
+class Gusano {
+  ArrayList<Segmento> segmentos;
+  color colorGusano;
+  float objetivoX, objetivoY;
+  float cambioObjetivo;
+  float frecuenciaCambio;
+  int id;
+  
+  Gusano(float x, float y, color c, int id_) {
+    segmentos = new ArrayList<Segmento>();
+    colorGusano = c;
+    id = id_;
+    
+    // Crear segmentos del gusano
+    for (int i = 0; i < numSegmentos; i++) {
+      segmentos.add(new Segmento(x, y));
+    }
+    
+    // Establecer primer objetivo aleatorio
+    objetivoX = random(100, width-100);
+    objetivoY = random(100, height-100);
+    cambioObjetivo = 0;
+    frecuenciaCambio = random(80, 120);
+  }
+  
+  void actualizar() {
+    // Cambiar dirección periódicamente o cuando está muy cerca del objetivo
+    cambioObjetivo++;
+    Segmento cabeza = segmentos.get(0);
+    float distanciaAlObjetivo = dist(cabeza.x, cabeza.y, objetivoX, objetivoY);
+    
+    // Cambiar objetivo si ha pasado el tiempo o si está muy cerca del actual
+    if (cambioObjetivo > frecuenciaCambio || distanciaAlObjetivo < 20) {
+      nuevoObjetivo();
+      cambioObjetivo = 0;
+    }
+    
+    // OBTENER INFLUENCIA DEL FLUIDO en la posición de la cabeza
+    PVector velocidadFluido = fluido.obtenerVelocidad(cabeza.x, cabeza.y);
+    float alturaFluido = fluido.obtenerAltura(cabeza.x, cabeza.y);
+    
+    // El gusano es afectado por la corriente del fluido
+    float objetivoConFluidoX = objetivoX + velocidadFluido.x * 15;
+    float objetivoConFluidoY = objetivoY + velocidadFluido.y * 15;
+    
+    // También es empujado hacia arriba por las ondas
+    objetivoConFluidoY -= alturaFluido * 0.5;
+    
+    // Actualizar movimiento de la cabeza basado en objetivo modificado por fluido
+    cabeza.seguir(objetivoConFluidoX, objetivoConFluidoY);
+    cabeza.actualizar();
+    
+    // Pequeños ajustes aleatorios ocasionales en la dirección
+    if (random(1) < 0.03) {
+      objetivoX += random(-30, 30);
+      objetivoY += random(-30, 30);
+      objetivoX = constrain(objetivoX, 150, width-150);
+      objetivoY = constrain(objetivoY, 150, height-150);
+    }
+    
+    // Actualizar el resto de segmentos, cada uno también afectado por el fluido
+    for (int i = 1; i < segmentos.size(); i++) {
+      Segmento seg = segmentos.get(i);
+      Segmento segAnterior = segmentos.get(i - 1);
+      
+      // Cada segmento también siente el fluido en su posición
+      PVector velFluidoSeg = fluido.obtenerVelocidad(seg.x, seg.y);
+      float alturaFluidoSeg = fluido.obtenerAltura(seg.x, seg.y);
+      
+      float targetX = segAnterior.x + velFluidoSeg.x * 10;
+      float targetY = segAnterior.y + velFluidoSeg.y * 10 - alturaFluidoSeg * 0.3;
+      
+      seg.seguir(targetX, targetY);
+      seg.actualizar();
+    }
+  }
+  
+  void nuevoObjetivo() {
+    // Generar nuevo objetivo en dirección similar pero no idéntica
+    Segmento cabeza = segmentos.get(0);
+    float anguloActual = atan2(objetivoY - cabeza.y, objetivoX - cabeza.x);
+    float nuevoAngulo = anguloActual + random(-PI/3, PI/3);
+    
+    float distancia = random(100, 250);
+    
+    objetivoX = cabeza.x + cos(nuevoAngulo) * distancia;
+    objetivoY = cabeza.y + sin(nuevoAngulo) * distancia;
+    
+    objetivoX = constrain(objetivoX, 100, width-100);
+    objetivoY = constrain(objetivoY, 100, height-100);
+  }
+  
+  void dibujarForma() {
+    // Usar el color negro para todos los gusanos
+    stroke(colorGusano);
+    
+    // Dibujar la forma alargada usando el sistema de segmentos
+    for (int i = 10000; i > 0; i--) {
+      // Calcular la posición vertical relativa en la forma
+      float x_param = i % 200;
+      float y_param = i / 43.0;
+      
+      // Calcular la posición Y final en la forma
+      float k = 5 * cos(x_param / 14) * cos(y_param / 30);
+      float e = y_param / 8 - 13;
+      float d = sq(mag(k, e)) / 59 + 4;
+      float py = d * 45;
+      
+      // Usar la posición vertical de la forma para determinar el segmento
+      float minPY = 100;
+      float maxPY = 400;
+      float verticalProgression = constrain(map(py, minPY, maxPY, 0, 1), 0, 1);
+      
+      // Encontrar el segmento basado en la posición vertical en la forma
+      int segmentIndex = int(verticalProgression * (segmentos.size() - 1));
+      Segmento seg = segmentos.get(segmentIndex);
+      
+      // Calcular posición interpolada entre segmentos
+      float segmentProgression = (verticalProgression * (segmentos.size() - 1)) - segmentIndex;
+      float x, y;
+      
+      if (segmentIndex < segmentos.size() - 1) {
+        Segmento nextSeg = segmentos.get(segmentIndex + 1);
+        x = lerp(seg.x, nextSeg.x, segmentProgression);
+        y = lerp(seg.y, nextSeg.y, segmentProgression);
+      } else {
+        x = seg.x;
+        y = seg.y;
+      }
+      
+      // Aplicar efecto de fluido a la posición de dibujo
+      PVector velFluidoPunto = fluido.obtenerVelocidad(x, y);
+      float alturaFluidoPunto = fluido.obtenerAltura(x, y);
+      
+      // El punto se mueve con el fluido
+      x += velFluidoPunto.x * 0.5;
+      y += velFluidoPunto.y * 0.5 - alturaFluidoPunto * 0.2;
+      
+      // Dibujar el punto usando la posición del segmento correspondiente
+      dibujarPuntoForma(x_param, y_param, x, y);
+    }
+    
+    // Marcar la cabeza con negro más intenso
+    stroke(0, 200);
+    strokeWeight(4);
+    point(segmentos.get(0).x, segmentos.get(0).y);
+    strokeWeight(1);
+  }
+  
+  void dibujarPuntoForma(float x, float y, float cx, float cy) {
+    // AQUÍ ES DONDE PUEDES PERSONALIZAR LAS ECUACIONES PARA CADA GUSANO
+    float k, e, d, q, px, py;
+    float headOffset = 184;
+    
+    switch(id) {
+      case 0:
+        // Gusano 0 - Ecuación original
+        k = 5 * cos(x / 14) * cos(y / 30);
+        e = y / 8 - 13;
+        d = sq(mag(k, e)) / 59 + 4;
+        q = - 3 * sin(atan2(k, e) * e) + k * (3 + 4 / d * sin(d * d - t * 2));
+        px = q + 0.9;
+        py = d * 45;
+        break;
+        
+      case 1:
+        // Gusano 1 
+        k = 6 * cos(x / 12) * cos(y / 25);
+        e = y / 7 - 15;
+        d = sq(mag(k, e)) / 50 + 3;
+        q = - 2 * sin(atan2(k, e) * e) + k * (2 + 5 / d * sin(d * d - t * 1.5));
+        px = q + 1.2;
+        py = d * 40;
+        break;
+        
+      case 2:
+        // Gusano 2 
+        k = 4 * cos(x / 16) * cos(y / 35);
+        e = y / 9 - 11;
+        d = sq(mag(k, e)) / 65 + 5;
+        q = - 4 * sin(atan2(k, e) * e) + k * (4 + 3 / d * sin(d * d - t * 2.5));
+        px = q + 0.6;
+        py = d * 50;
+        break;
+        
+      case 3:
+        // Gusano 3 
+        k = 7 * cos(x / 10) * cos(y / 20);
+        e = y / 6 - 17;
+        d = sq(mag(k, e)) / 45 + 2;
+        q = - 5 * sin(atan2(k, e) * e) + k * (5 + 6 / d * sin(d * d - t * 3));
+        px = q + 1.5;
+        py = d * 35;
+        break;
+        case 4:
+        // Gusano 4 
+        k = 7 * cos(x / 10) * cos(y / 3);
+        e = y / 5 - 17;
+        d = sq(mag(k, e)) / 45 + 2;
+        q = - 5 * sin(atan2(k, e) * e) + k * (5 + 6 / d * sin(d * d - t * 3));
+        px = q + 1.5;
+        py = d * 35;
+        break;
+        
+      default:
+        // Para gusanos adicionales, usar ecuación base
+        k = 5 * cos(x / 14) * cos(y / 30);
+        e = y / 8 - 13;
+        d = sq(mag(k, e)) / 59 + 4;
+        q = - 3 * sin(atan2(k, e) * e) + k * (3 + 4 / d * sin(d * d - t * 2));
+        px = q + 1.6;
+        py = d * 45;
+        break;
+    }
+    
+    point(px + cx, py - headOffset + cy);
+  }
+}
+
+class Segmento {
+  float x, y;
+  float angulo;
+  
+  Segmento(float x_, float y_) {
+    x = x_;
+    y = y_;
+    angulo = 0;
+  }
+  
+  void seguir(float targetX, float targetY) {
+    float dx = targetX - x;
+    float dy = targetY - y;
+    angulo = atan2(dy, dx);
+    
+    float distancia = dist(x, y, targetX, targetY);
+    
+    // Siempre aplicar movimiento
+    float fuerza = velocidad;
+    if (distancia < 50) {
+      fuerza = map(distancia, 0, 50, velocidad * 0.3, velocidad);
+    }
+    
+    x += cos(angulo) * fuerza;
+    y += sin(angulo) * fuerza;
+  }
+  
+  void actualizar() {
+    x = constrain(x, 50, width - 50);
+    y = constrain(y, 50, height - 50);
+  }
+}
+
+void reiniciarGusanos() {
+  gusanos.clear();
+  for (int i = 0; i < numGusanos; i++) {
+    float x = random(200, width-200);
+    float y = random(200, height-200);
+    color c = color(0, 66);
+    gusanos.add(new Gusano(x, y, c, i));
+  }
+}
