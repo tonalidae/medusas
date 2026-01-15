@@ -251,18 +251,18 @@ class Segmento {
 }
 
 // Controles para ajustar parámetros
-void keyPressed() {
-  if (key == '+' || key == '=') {
-    numGusanos = min(8, numGusanos + 1);
-    reiniciarGusanos();
-  } else if (key == '-' || key == '_') {
-    numGusanos = max(1, numGusanos - 1);
-    reiniciarGusanos();
-  } else if (key == ' ') {
-    // Espacio para reiniciar
-    reiniciarGusanos();
-  }
-}
+//void keyPressed() {
+//  if (key == '+' || key == '=') {
+//    numGusanos = min(8, numGusanos + 1);
+//    reiniciarGusanos();
+//  } else if (key == '-' || key == '_') {
+//    numGusanos = max(1, numGusanos - 1);
+//    reiniciarGusanos();
+//  } else if (key == ' ') {
+//    // Espacio para reiniciar
+//    reiniciarGusanos();
+//  }
+//}
 
 void reiniciarGusanos() {
   gusanos.clear();
