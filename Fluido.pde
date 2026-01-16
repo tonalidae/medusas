@@ -19,15 +19,13 @@ class Fluido {
   float[][] tmpVx;
   float[][] tmpVy;
 
-  // --- render-only helpers (no physics changes) ---
-  PGraphics floorTex;      // subtle "pond bottom" texture (procedural)
-  float floorScroll = 0;   // tiny drift (purely visual)
+  // --- per-frame render caches (computed once per dibujar()) ---
+  float[][] hCache;      // height = (y - oy)
+  float[][] gxCache;     // d(height)/dx
+  float[][] gyCache;     // d(height)/dy
+  float[][] slopeCache;  // sqrt(gx^2 + gy^2)
+  // ----------------------------------------------------------
 
-  // Half-res highlight buffer to smooth out visible triangle facets
-  // (blur only the lighting layer, not the whole scene)
-  PGraphics hlTex;
-  int hlDownscale = 2; // 2 = half-res (recommended). 1 = full-res.
-  // ----------------------------------------------
 
   Fluido(int c, int f, float esp) {
     cols = c;
@@ -42,6 +40,12 @@ class Fluido {
 
     tmpVx = new float[cols][filas];
     tmpVy = new float[cols][filas];
+
+    // render caches (updated once per frame in dibujar())
+    hCache     = new float[cols][filas];
+    gxCache    = new float[cols][filas];
+    gyCache    = new float[cols][filas];
+    slopeCache = new float[cols][filas];
 
     particulas = new Particula[cols][filas];
     for (int i = 0; i < cols; i++) {
@@ -69,49 +73,8 @@ class Fluido {
       }
     }
 
-    // Procedural "pond bottom" texture (optional; no external assets)
-    floorTex = createGraphics((int)(cols * espaciado), (int)(filas * espaciado));
-    generarTexturaFondo();
-
-    // Highlight buffer (half-res) to smooth ripple lighting
-    int hw = max(1, (int)(cols * espaciado / (float)hlDownscale));
-    int hh = max(1, (int)(filas * espaciado / (float)hlDownscale));
-    hlTex = createGraphics(hw, hh);
   }
 
-  void generarTexturaFondo() {
-    floorTex.beginDraw();
-    floorTex.noStroke();
-    floorTex.background(245);
-
-    floorTex.loadPixels();
-    int w = floorTex.width;
-    int h = floorTex.height;
-    float ns = 0.018;
-    for (int y = 0; y < h; y++) {
-      for (int x = 0; x < w; x++) {
-        float n  = noise(x * ns, y * ns);
-        float n2 = noise(1000 + x * ns * 2.2, 2000 + y * ns * 2.2);
-        float v  = 0.65 * n + 0.35 * n2;
-
-        int r = (int)lerp(232, 248, v);
-        int g = (int)lerp(228, 246, v);
-        int b = (int)lerp(224, 244, v);
-        floorTex.pixels[y * w + x] = color(r, g, b);
-      }
-    }
-    floorTex.updatePixels();
-
-    for (int k = 0; k < 140; k++) {
-      float x = random(w);
-      float y = random(h);
-      float rr = random(6, 18);
-      floorTex.fill(0, 10);
-      floorTex.ellipse(x, y, rr, rr);
-    }
-
-    floorTex.endDraw();
-  }
 
   void actualizar() {
     int sub = 2;
@@ -266,196 +229,58 @@ void perturbar(float x, float y, float radio, float fuerza) {
     float w = cols * espaciado;
     float h = filas * espaciado;
 
+    // Precompute height/gradients/slope once per frame for rendering
+    actualizarCamposRender();
+
     pushStyle();
     clip((int)offsetX, (int)offsetY, (int)w, (int)h);
 
-    floorScroll += 0.15;
+    // Simple, renderer-safe draw path:
+    // - NO textures
+    // - NO beginShape()/vertex()
+    
 
-    // Render-only subdivision: increases apparent fluid resolution without increasing physics cost.
-    // 1 = current behavior, 2 = smoother (recommended), 3 = even smoother but more vertices.
-    int renderSub = 3;
-
-    // ------------------------------------------------------------
-    // Combo:
-    // 1) Caustics-style bottom texture with UV distortion driven by the field
-    // 2) Slope-based highlight shading so waves read as lighting
-    // (Physics unchanged)
-    // ------------------------------------------------------------
-
-    // 1) Distorted bottom texture (caustics / refraction feel)
-    // Use original grid UVs (stable) + distortion from velocity + height gradient
-    pushStyle();
     noStroke();
-    textureMode(IMAGE);
-    // Slightly brighter so distortion reads on dark backgrounds
-    tint(255, 232);
 
-    float scrollU = sin(floorScroll * 0.010) * 8;
-    float scrollV = cos(floorScroll * 0.008) * 8;
-
-    for (int j = 0; j < filas - 1; j++) {
-      beginShape(TRIANGLE_STRIP);
-      texture(floorTex);
-
-      for (int i = 0; i < cols - 1; i++) {
-        Particula a0 = particulas[i][j];
-        Particula b0 = particulas[i + 1][j];
-        Particula a1 = particulas[i][j + 1];
-        Particula b1 = particulas[i + 1][j + 1];
-
-        // Height gradient (for refraction direction)
-        float gx_a0 = gradX(i,     j);
-        float gy_a0 = gradY(i,     j);
-        float gx_b0 = gradX(i + 1, j);
-        float gy_b0 = gradY(i + 1, j);
-        float gx_a1 = gradX(i,     j + 1);
-        float gy_a1 = gradY(i,     j + 1);
-        float gx_b1 = gradX(i + 1, j + 1);
-        float gy_b1 = gradY(i + 1, j + 1);
-
-        // Distortion drivers (flow + slope)
-        float du_a0 = a0.vx * 34 + gx_a0 * 110;
-        float dv_a0 = a0.vy * 34 + gy_a0 * 110;
-        float du_b0 = b0.vx * 34 + gx_b0 * 110;
-        float dv_b0 = b0.vy * 34 + gy_b0 * 110;
-
-        float du_a1 = a1.vx * 34 + gx_a1 * 110;
-        float dv_a1 = a1.vy * 34 + gy_a1 * 110;
-        float du_b1 = b1.vx * 34 + gx_b1 * 110;
-        float dv_b1 = b1.vy * 34 + gy_b1 * 110;
-
-        int s0 = (i == 0) ? 0 : 1; // avoid duplicating the seam vertex
-        for (int s = s0; s <= renderSub; s++) {
-          float tt = s / (float)renderSub;
-
-          // Interpolate positions along the top/bottom edges
-          float x0 = lerp(a0.x, b0.x, tt);
-          float y0 = lerp(a0.y, b0.y, tt);
-          float x1 = lerp(a1.x, b1.x, tt);
-          float y1 = lerp(a1.y, b1.y, tt);
-
-          // Stable UV base from sub-cell coordinate
-          float baseU = (i + tt) * espaciado;
-          float baseV0 = j * espaciado;
-          float baseV1 = (j + 1) * espaciado;
-
-          // Interpolate distortion
-          float du0 = lerp(du_a0, du_b0, tt);
-          float dv0 = lerp(dv_a0, dv_b0, tt);
-          float du1 = lerp(du_a1, du_b1, tt);
-          float dv1 = lerp(dv_a1, dv_b1, tt);
-
-          vertex(x0, y0, baseU + scrollU + du0, baseV0 + scrollV + dv0);
-          vertex(x1, y1, baseU + scrollU + du1, baseV1 + scrollV + dv1);
-        }
-      }
-
-      endShape();
-    }
-
-    noTint();
-    popStyle();
-
-    // 2) Subtle water veil (keeps the scene cohesive)
-    noStroke();
-    // Keep it subtle so highlights remain visible
-    fill(18, 24, 44, 8);
+    // Base water tint (very subtle so background still dominates)
+    fill(10, 14, 30, 55);
     rect(offsetX, offsetY, w, h);
 
-    // 3) Slope-based highlights (waves show as lighting, not contour lines)
-    // Render highlights to a half-res buffer, blur slightly, then additively composite.
-    if (hlTex != null) {
-      float inv = 1.0 / (float)hlDownscale;
+    // Lighting / ripple visibility: additive micro-highlights per cell
+    blendMode(ADD);
 
-      hlTex.beginDraw();
-      // Transparent background (keep only highlights)
-      hlTex.clear();
-      hlTex.noStroke();
-      hlTex.blendMode(ADD);
+    // Tunables (safe defaults)
+    float slopeGain = 520;  // higher = brighter crests
+    float crestPow  = 1.45; // higher = tighter bands, lower = softer
+    float flowGain  = 70;   // higher = moving water stands out more
 
-      float hScale = 1.0;
-      float slopeGain = 430;   // stronger highlights so waves read as light
-      float crestPow  = 1.7;   // slightly softer = smoother light bands
-      float flowGain  = 55;    // makes moving water stand out (speed-based)
+    // Draw one rect per grid cell (fast enough at 60x50)
+    for (int j = 0; j < filas; j++) {
+      for (int i = 0; i < cols; i++) {
+        Particula p = particulas[i][j];
 
-      for (int j = 0; j < filas - 1; j++) {
-        hlTex.beginShape(TRIANGLE_STRIP);
-        for (int i = 0; i < cols - 1; i++) {
-          Particula a0 = particulas[i][j];
-          Particula b0 = particulas[i + 1][j];
-          Particula a1 = particulas[i][j + 1];
-          Particula b1 = particulas[i + 1][j + 1];
+        float s = slopeCache[i][j];
+        float v = sqrt(p.vx*p.vx + p.vy*p.vy);
 
-          float s_a0 = slopeMag(i,     j) * hScale;
-          float s_b0 = slopeMag(i + 1, j) * hScale;
-          float s_a1 = slopeMag(i,     j + 1) * hScale;
-          float s_b1 = slopeMag(i + 1, j + 1) * hScale;
+        // highlight intensity from slope (lighting) + speed (motion)
+        float hl = pow(constrain(s * 0.16, 0, 1), crestPow) * slopeGain + constrain(v * flowGain, 0, 180);
 
-          float v_a0 = sqrt(a0.vx*a0.vx + a0.vy*a0.vy);
-          float v_b0 = sqrt(b0.vx*b0.vx + b0.vy*b0.vy);
-          float v_a1 = sqrt(a1.vx*a1.vx + a1.vy*a1.vy);
-          float v_b1 = sqrt(b1.vx*b1.vx + b1.vy*b1.vy);
+        // Map intensity to an ocean-ish gradient
+        float u = constrain(hl / 240.0, 0, 1);
+        color deep  = color(12, 45, 115);
+        color light = color(210, 245, 255);
+        color c = lerpColor(deep, light, pow(u, 0.85));
 
-          int s0 = (i == 0) ? 0 : 1; // avoid duplicating the seam vertex
-          for (int s = s0; s <= renderSub; s++) {
-            float tt = s / (float)renderSub;
+ 
+        float a = constrain(hl * 0.55, 0, 170);
+        fill(c, a);
 
-            // Interpolated positions along edges
-            float x0 = lerp(a0.x, b0.x, tt);
-            float y0 = lerp(a0.y, b0.y, tt);
-            float x1 = lerp(a1.x, b1.x, tt);
-            float y1 = lerp(a1.y, b1.y, tt);
-
-            // Convert to local coords within the fluid rect, then downscale
-            float lx0 = (x0 - offsetX) * inv;
-            float ly0 = (y0 - offsetY) * inv;
-            float lx1 = (x1 - offsetX) * inv;
-            float ly1 = (y1 - offsetY) * inv;
-
-            // Interpolated slope + speed
-            float sTop = lerp(s_a0, s_b0, tt);
-            float sBot = lerp(s_a1, s_b1, tt);
-            float vTop = lerp(v_a0, v_b0, tt);
-            float vBot = lerp(v_a1, v_b1, tt);
-
-            float hl0 = pow(constrain(sTop * 0.14, 0, 1), crestPow) * slopeGain + constrain(vTop * flowGain, 0, 120);
-            float hl1 = pow(constrain(sBot * 0.14, 0, 1), crestPow) * slopeGain + constrain(vBot * flowGain, 0, 120);
-
-            // Ocean-blue gradient for highlights (deeper -> cyan/white)
-            float u0 = constrain(hl0 / 220.0, 0, 1);
-            float u1 = constrain(hl1 / 220.0, 0, 1);
-
-            color deep  = color(12,  50, 120);
-            color light = color(210, 245, 255);
-
-            color c0 = lerpColor(deep, light, pow(u0, 0.85));
-            color c1 = lerpColor(deep, light, pow(u1, 0.85));
-
-            hlTex.fill(c0, constrain(hl0 * 1.10, 0, 220));
-            hlTex.vertex(lx0, ly0);
-
-            hlTex.fill(c1, constrain(hl1 * 1.10, 0, 220));
-            hlTex.vertex(lx1, ly1);
-          }
-        }
-        hlTex.endShape();
+        // Cell rect centered on the particle's rest grid position
+        rect(p.ox - espaciado * 0.5, p.oy - espaciado * 0.5, espaciado, espaciado);
       }
-
-      hlTex.blendMode(BLEND);
-      // Slight blur to hide triangle facets (cheap because hlTex is half-res)
-      hlTex.filter(BLUR, 1);
-      hlTex.endDraw();
-
-      // Composite highlights back onto main canvas
-      pushStyle();
-      blendMode(ADD);
-      tint(255, 245);
-      image(hlTex, offsetX, offsetY, w, h);
-      noTint();
-      blendMode(BLEND);
-      popStyle();
     }
 
+    blendMode(BLEND);
     noClip();
     popStyle();
   }
@@ -706,31 +531,65 @@ void perturbar(float x, float y, float radio, float fuerza) {
     }
   }
 
+  // Compute render-only field caches once per frame (used by dibujar())
+  void actualizarCamposRender() {
+    // 1) Height cache
+    for (int i = 0; i < cols; i++) {
+      for (int j = 0; j < filas; j++) {
+        Particula p = particulas[i][j];
+        hCache[i][j] = p.y - p.oy;
+      }
+    }
+
+    // 2) Gradients + slope (central differences with clamped edges)
+    float inv2dx = 1.0 / (2.0 * espaciado);
+    for (int i = 0; i < cols; i++) {
+      int iL = (i > 0) ? (i - 1) : 0;
+      int iR = (i < cols - 1) ? (i + 1) : (cols - 1);
+      for (int j = 0; j < filas; j++) {
+        int jU = (j > 0) ? (j - 1) : 0;
+        int jD = (j < filas - 1) ? (j + 1) : (filas - 1);
+
+        float hL = hCache[iL][j];
+        float hR = hCache[iR][j];
+        float hU = hCache[i][jU];
+        float hD = hCache[i][jD];
+
+        float gx = (hR - hL) * inv2dx;
+        float gy = (hD - hU) * inv2dx;
+
+        gxCache[i][j] = gx;
+        gyCache[i][j] = gy;
+        slopeCache[i][j] = sqrt(gx * gx + gy * gy);
+      }
+    }
+  }
+
   // --- field sampling helpers for shading / refraction (render-only) ---
   float heightAt(int i, int j) {
     i = constrain(i, 0, cols - 1);
     j = constrain(j, 0, filas - 1);
-    return particulas[i][j].y - particulas[i][j].oy;
+    return hCache[i][j];
   }
 
   // Height gradient components (central differences)
   float gradX(int i, int j) {
-    float hL = heightAt(i - 1, j);
-    float hR = heightAt(i + 1, j);
-    return (hR - hL) / (2.0 * espaciado);
+    i = constrain(i, 0, cols - 1);
+    j = constrain(j, 0, filas - 1);
+    return gxCache[i][j];
   }
 
   float gradY(int i, int j) {
-    float hU = heightAt(i, j - 1);
-    float hD = heightAt(i, j + 1);
-    return (hD - hU) / (2.0 * espaciado);
+    i = constrain(i, 0, cols - 1);
+    j = constrain(j, 0, filas - 1);
+    return gyCache[i][j];
   }
 
   // Gradient magnitude (slope) used for highlights
   float slopeMag(int i, int j) {
-    float gx = gradX(i, j);
-    float gy = gradY(i, j);
-    return sqrt(gx*gx + gy*gy);
+    i = constrain(i, 0, cols - 1);
+    j = constrain(j, 0, filas - 1);
+    return slopeCache[i][j];
   }
 
   // API methods (unchanged)
