@@ -27,7 +27,8 @@ class Segmento {
 
     float fuerza = velocidad;
     if (distancia < 50) {
-      fuerza = map(distancia, 0, 50, velocidad * 0.3, velocidad);
+      // less slowdown near the target so the head doesn't "crawl"
+      fuerza = map(distancia, 0, 50, velocidad * 0.5, velocidad);
     }
 
     x += cos(angulo) * fuerza;
@@ -37,15 +38,12 @@ class Segmento {
   void actualizar() {
     // Larger margins so the *drawn* jellyfish (not just its segment points) stays on-screen.
     // Tune these if your shape constants change.
-    float mx = 220;
-    float myTop = 240;
-    float myBot = 280;
 
-    x = constrain(x, mx, width - mx);
-    y = constrain(y, myTop, height - myBot);
+  x = constrain(x, boundsInset, width - boundsInset);
+  y = constrain(y, boundsInset, height - boundsInset);
 
     // Keep previous position inside bounds too (avoids huge spikes when clamped)
-    prevX = constrain(prevX, mx, width - mx);
-    prevY = constrain(prevY, myTop, height - myBot);
+    prevX = constrain(prevX, boundsInset, width - boundsInset);
+    prevY = constrain(prevY, boundsInset, height - boundsInset);
   }
 }

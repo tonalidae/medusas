@@ -20,11 +20,56 @@ class Gusano {
   float rangoRepulsion = 120;
   float rangoChoque = 70;
 
+  // --- Pulse oscillator + arousal (burst/coast + smooth state) ---
+  float phase = 0;
+  float baseFreq = 0.045;   // radians per frame (will be modulated by arousal)
+  float pulseAmp = 1.6;     // how much extra head travel during contraction
+  float pulseK = 2.6;       // higher = snappier contraction
+
+  float arousal = 0;        // 0..1 (fast attack, slow decay)
+  float arousalAttack = 0.12;
+  float arousalDecay  = 0.982;
+  float wUser = 0.75;
+  float wSocial = 0.55;
+
+
+  // --- Rhythm switching (user-dominant vs social-dominant) ---
+  float userMode = 0;        // 0..1 (0 = schooling, 1 = interactive)
+  float modeFollow = 0.10;   // smoothing for mode switching
+  float domK = 1.35;         // userDominant if S_user > S_social * domK
+  float domSoft = 0.30;      // softness for smooth dominance
+
+
+  // --- User attitude (curious <-> fearful) ---
+  // userAttitude in [-1, +1]
+  //  +1 = curious (approach mouse)
+  //  -1 = fearful (flee mouse)
+  float userAttitude = 0;       // current attitude
+  float userAttTarget = 0;      // slowly drifting target
+  float attFollow = 0.03;       // smoothing toward target
+  float attDrift  = 0.004;      // random walk strength
+
+  // --- Main knobs (behavioral) ---
+  float userPushBase = 140;     // higher = more reactive to mouse steering
+  float wallRange = 130;        // px: how far wall repulsion reaches
+  float wallPush  = 0.85;       // strength of soft wall repulsion
+  float fleeKick  = 3.2;        // tiny extra kick when fearful + high user stimulus
+  float flipBase  = 0.008;      // base flip chance per frame
+  float flipGain  = 0.10;       // additional flip chance scaled by S_user
+
+  // --- Phase sync (Kuramoto-lite) ---
+  float syncStrength = 0.016;   // base coupling per frame (very small)
+  float syncMaxStep  = 0.035;   // max radians/frame correction
+
   // --- Body cohesion (prevents unnatural stretching) ---
   float longitudSegmento = 12;   // desired distance between segments (pixels)
   int   constraintIters  = 5;    // constraint relaxation iterations (higher = stiffer)
   float constraintStiff  = 0.85; // 0..1 how strongly we correct per iteration
   float bendSmooth       = 0.12; // 0..1 soft spine smoothing (keeps it organic)
+
+  // --- Render scale (size) ---
+  // Scale the whole gusano shape. 0.6 = 40% smaller.
+  float shapeScale = 0.60;
 
   // --- Life cycle (morir / renacer / crecer) ---
   // estado: 0 = viva, 1 = muriendo (pierde puntos/cuerpo), 2 = creciendo (renace)
@@ -55,8 +100,8 @@ class Gusano {
     // Spread initial segments a bit to avoid huge additive bloom at spawn
     distribuirSegmentos(x, y);
 
-    objetivoX = random(100, width-100);
-    objetivoY = random(100, height-100);
+    objetivoX = random(boundsInset, width - boundsInset);
+    objetivoY = random(boundsInset, height - boundsInset);
     cambioObjetivo = 0;
     frecuenciaCambio = random(80, 120);
 
@@ -75,34 +120,196 @@ class Gusano {
     cacheVx = new float[numSegmentos];
     cacheVy = new float[numSegmentos];
     cacheH  = new float[numSegmentos];
+
+    // Oscillator/arousal init (per jellyfish personality)
+    phase = random(TWO_PI);
+    baseFreq = random(0.025, 0.050);
+    pulseAmp = random(1.1, 1.9);
+    pulseK   = random(1.8, 2.3);
+    arousal = 0;
+
+    // User attitude init
+    userAttitude = random(-1, 1);
+    userAttTarget = userAttitude;
   }
 
   void actualizar() {
     ageFrames++;
+    // --- Spawn easing: reduce harsh initial motion after spawn/respawn ---
+    // 0..1 ramp over first ~60 frames
+    float spawnEase = constrain(ageFrames / 60.0, 0, 1);
+    spawnEase = spawnEase * spawnEase * (3.0 - 2.0 * spawnEase); // smoothstep
     cambioObjetivo++;
     Segmento cabeza = segmentos.get(0);
+    if (exitArmed) {
+ 
+
+
+  float dL = cabeza.x;
+  float dR = width - cabeza.x;
+  float dT = cabeza.y;
+  float dB = height - cabeza.y;
+
+  if (dL < dR && dL < dT && dL < dB) {
+    objetivoX = -300;
+    objetivoY = cabeza.y;
+  } else if (dR < dT && dR < dB) {
+    objetivoX = width + 300;
+    objetivoY = cabeza.y;
+  } else if (dT < dB) {
+    objetivoX = cabeza.x;
+    objetivoY = -300;
+  } else {
+    objetivoX = cabeza.x;
+    objetivoY = height + 300;
+  }
+
+
+  // Puedes sumar un pequeño empujón en la dirección del objetivo:
+  float dx = objetivoX - cabeza.x;
+  float dy = objetivoY - cabeza.y;
+  float m = sqrt(dx*dx + dy*dy);
+  if (m > 1e-6) {
+    dx /= m; dy /= m;
+    cabeza.x += dx * 1.2;
+    cabeza.y += dy * 1.2;
+  }
+}
+
+    // ------------------------------------------------------------
+    // AROUSAL (fast attack, slow decay) + PULSE OSCILLATOR
+    // Stimuli:
+    //  - user: nearby mouse movement (and pressed)
+    //  - social: proximity stress + local neighbor count
+    // ------------------------------------------------------------
+    float mouseV = dist(mouseX, mouseY, pmouseX, pmouseY);
+    float dMouse = dist(cabeza.x, cabeza.y, mouseX, mouseY);
+    float userNear = 1.0 - constrain(dMouse / 200.0, 0, 1);
+    userNear = smoothstep(userNear);
+
+    float userMove = constrain(mouseV / 30.0, 0, 1);
+    float S_user = userNear * userMove;
+    if (mousePressed) S_user = max(S_user, userNear * 0.85);
+
+    // ------------------------------------------------------------
+    // USER ATTITUDE UPDATE (curious <-> fearful)
+    // - Smooth drift so it doesn't freeze
+    // - Occasionally flips when user stimulus is strong
+    // - Very rarely flips when calm
+    // Main knob: (flipBase + flipGain * S_user)
+    // ------------------------------------------------------------
+    float flipP = flipBase + flipGain * S_user;
+    if (random(1) < flipP) {
+      // flip target, keep it strong enough to read
+      userAttTarget = -userAttTarget;
+      if (abs(userAttTarget) < 0.35) userAttTarget = (userAttTarget >= 0 ? 0.75 : -0.75);
+      // tiny randomness so it doesn't bounce between two exact values
+      userAttTarget = constrain(userAttTarget + random(-0.15, 0.15), -1, 1);
+    } else {
+      // slow random-walk drift (keeps personalities alive)
+      userAttTarget = constrain(userAttTarget + random(-1, 1) * attDrift, -1, 1);
+    }
+    userAttitude += (userAttTarget - userAttitude) * attFollow;
+    userAttitude = constrain(userAttitude, -1, 1);
+
+    // Social stimulus will be filled later (after we compute stress + neighbor counts)
+    float S_social = 0;
+
+    // We'll finish arousal update after social loop, but we can advance phase now with last arousal
+    // (phase step gets refined once arousal is updated)
     float distanciaAlObjetivo = dist(cabeza.x, cabeza.y, objetivoX, objetivoY);
+
+    // Target switching modulation: calm = dreamy long arcs, aroused/user = twitchy retarget
+    float calm = (1.0 - arousal) * (1.0 - 0.7 * userMode);
+    frecuenciaCambio = lerp(90, 160, calm);
+    // Early on, avoid twitchy retargeting while everything is still "waking up"
+    frecuenciaCambio = lerp(220, frecuenciaCambio, spawnEase);
 
     if (cambioObjetivo > frecuenciaCambio || distanciaAlObjetivo < 20) {
       nuevoObjetivo();
       cambioObjetivo = 0;
     }
 
+    // --- Sample fluid ONCE for the head this frame (and cache it for drawing) ---
     PVector velocidadFluido = fluido.obtenerVelocidad(cabeza.x, cabeza.y);
-    float alturaFluido =
-      fluido.obtenerAltura(cabeza.x, cabeza.y);
+    float alturaFluido = fluido.obtenerAltura(cabeza.x, cabeza.y);
+    cacheVx[0] = velocidadFluido.x;
+    cacheVy[0] = velocidadFluido.y;
+    cacheH[0]  = alturaFluido;
 
     float objetivoConFluidoX = objetivoX + velocidadFluido.x * 15;
     float objetivoConFluidoY = objetivoY + velocidadFluido.y * 15;
     objetivoConFluidoY -= alturaFluido * 0.5;
 
-    cabeza.seguir(objetivoConFluidoX, objetivoConFluidoY);
+    // ------------------------------------------------------------
+    // User-target bias: mouse steers the *target* toward/away
+    // Strength depends on attitude + proximity + arousal (+ a bit of userMode)
+    // Main knob: userPushBase
+    // ------------------------------------------------------------
+    float att = userAttitude;                // [-1..1]
+    float attMag = abs(att);
+    float attSign = (att >= 0) ? 1.0 : -1.0; // +1 curious, -1 fearful
+
+    // Direction from head to mouse (if very close, skip)
+    float md = max(1e-6, dMouse);
+    float dmX = (mouseX - cabeza.x) / md;
+    float dmY = (mouseY - cabeza.y) / md;
+
+    float steerGate = userNear; // already smoothstepped
+    float steerA = 0.35 + 0.65 * arousal;
+    float steerM = 0.45 + 0.55 * userMode;
+
+    float userPush = userPushBase * attMag * steerGate * steerA * steerM * spawnEase;
+
+    // Curious: pull target toward mouse, Fearful: push it away
+    objetivoConFluidoX += dmX * userPush * attSign;
+    objetivoConFluidoY += dmY * userPush * attSign;
+
+    // Ease the effective target during the first frames so the head doesn't "snap"
+    float tgtX = lerp(cabeza.x, objetivoConFluidoX, spawnEase);
+    float tgtY = lerp(cabeza.y, objetivoConFluidoY, spawnEase);
+    cabeza.seguir(tgtX, tgtY);
+
+    // Pulse step (use current arousal from previous frame; refined below)
+    float modeBoost = lerp(0.86, 1.20, userMode); // softer user-dominant boost
+    float freq = baseFreq * lerp(0.85, 1.65, arousal) * modeBoost;
+    phase += freq;
+    if (phase > TWO_PI) phase -= TWO_PI;
+
+    float raw = max(0, sin(phase));
+    float pulse = pow(raw, pulseK);          // contraction: 0..1
+    float relax = 1.0 - pulse;               // relaxation: 0..1
+
+    // During contraction: tiny jet push forward (alive motion even with same target logic)
+    // Use cabeza.angulo from seguir() as the current steering direction.
+    float burst = pulse * pulseAmp * lerp(0.9, 1.45, arousal) * lerp(0.95, 1.35, userMode) * spawnEase;
+    cabeza.x += cos(cabeza.angulo) * burst;
+    cabeza.y += sin(cabeza.angulo) * burst;
+
+    // Tiny flee kick: when user stimulus is high, userMode is high, and attitude is fearful
+    // so "run away" reads clearly.
+    if (userAttitude < -0.15) {
+      float danger = constrain(0.5 * (S_user + userMode), 0, 1);
+      if (danger > 0.55) {
+        float awayX = (cabeza.x - mouseX);
+        float awayY = (cabeza.y - mouseY);
+        float am = sqrt(awayX*awayX + awayY*awayY);
+        if (am > 1e-6) {
+          awayX /= am;
+          awayY /= am;
+          float kick = fleeKick * danger * (-userAttitude) * (0.35 + 0.65 * arousal) * spawnEase;
+          cabeza.x += awayX * kick;
+          cabeza.y += awayY * kick;
+        }
+      }
+    }
 
     // --- Fluid drag: nudge the segment motion toward local fluid velocity ---
     // (Head has the weakest drag; tail will be stronger below)
     {
-      PVector vF = fluido.obtenerVelocidad(cabeza.x, cabeza.y);
-      float drag = 0.06;
+      PVector vF = velocidadFluido;
+      // More floaty during relaxation, more self-driven during contraction
+      float drag = 0.05 + 0.12 * (1.0 - pulse) + 0.05 * (1.0 - arousal) - 0.03 * userMode;
 
       float mvx = cabeza.x - cabeza.prevX;
       float mvy = cabeza.y - cabeza.prevY;
@@ -122,7 +329,7 @@ class Gusano {
       // --- Continuous wake injection (directional) ---
       if (sp > 0.15) {
         float radio = 18;
-        float fuerza = constrain(sp * 1.8, 0, 6.0);
+        float fuerza = constrain(sp * 1.8 * (1.0 + 0.8 * pulse + 0.6 * arousal) * lerp(1.0, 1.30, userMode) * spawnEase, 0, 7.2);
         fluido.perturbarDir(cabeza.x, cabeza.y, radio, mvx, mvy, fuerza);
       }
     }
@@ -132,8 +339,8 @@ class Gusano {
     if (random(1) < 0.03) {
       objetivoX += random(-30, 30);
       objetivoY += random(-30, 30);
-      objetivoX = constrain(objetivoX, 220, width - 220);
-      objetivoY = constrain(objetivoY, 240, height - 280);
+      objetivoX = constrain(objetivoX, boundsInset, width - boundsInset);
+      objetivoY = constrain(objetivoY, boundsInset, height - boundsInset);
     }
 
     // Social forces and life cycle
@@ -147,6 +354,7 @@ class Gusano {
 
     int nAli = 0;
     int nCoh = 0;
+    int nSoc = 0;
 
     // Stress accumulates when too close to others (used to drain vida)
     float stress = 0;
@@ -156,7 +364,8 @@ class Gusano {
     float myVy = cabeza.y - cabeza.prevY;
 
     // Occasional cohesion to avoid constant clumping
-    boolean doCohesion = (frameCount % 12 == (id % 12));
+    int cohPeriod = max(6, int(lerp(8, 18, userMode))); // social: often, user: rarely
+    boolean doCohesion = (frameCount % cohPeriod == (id % cohPeriod));
 
     for (Gusano otro : gusanos) {
       if (otro == this) continue;
@@ -172,8 +381,8 @@ class Gusano {
       if (d < rangoRepulsion) {
         float w = (rangoRepulsion - d) / rangoRepulsion;
         // Push away from neighbor (stronger when closer)
-        sep.x -= (dx / d) * (w * 2.2);
-        sep.y -= (dy / d) * (w * 2.2);
+        sep.x -= (dx / d) * (w * 1.8);
+        sep.y -= (dy / d) * (w * 1.8);
 
         // closeness costs energy (non-violent: just "fatigue")
         stress += w;
@@ -181,6 +390,7 @@ class Gusano {
 
       // --- Alignment + Cohesion (social range, mild) ---
       if (d < rangoSocial) {
+        nSoc++;
         // Alignment: steer toward neighbors' average heading
         float ovx = cabezaOtro.x - cabezaOtro.prevX;
         float ovy = cabezaOtro.y - cabezaOtro.prevY;
@@ -200,13 +410,72 @@ class Gusano {
       }
     }
 
+    // Social stimulus: stress + local crowding (both 0..1-ish)
+    float crowd = constrain(nSoc / 4.0, 0, 1);
+    S_social = constrain(0.55 * constrain(stress, 0, 1) + 0.45 * crowd, 0, 1);
+
+    // Arousal update: fast attack to stimulus, slow decay otherwise
+    float targetArousal = constrain(S_user * wUser + S_social * wSocial, 0, 1);
+    arousal += (targetArousal - arousal) * arousalAttack;
+    arousal *= arousalDecay;
+    arousal = constrain(arousal, 0, 1);
+
+    // ------------------------------------------------------------
+    // Rhythm switching: which stimulus dominates?
+    // userMode -> 1 when user dominates, 0 when social dominates
+    // (smoothly morph parameters; no hard if/else)
+    // ------------------------------------------------------------
+    float dom = (S_user - S_social * domK) / max(1e-6, domSoft);
+    float userTarget = smoothstep(0.5 + 0.5 * constrain(dom, -1, 1));
+    userMode += (userTarget - userMode) * modeFollow;
+    userMode = constrain(userMode, 0, 1);
+
+    // ------------------------------------------------------------
+    // Phase synchronization (Kuramoto-lite)
+    // - Only meaningful when social-dominant (userMode low)
+    // - Strength increases with S_social (grouped)
+    // - Uses circular mean via (cos, sin) averaging
+    // ------------------------------------------------------------
+    float syncGate = (1.0 - userMode) * S_social;   // 0..1
+    if (syncGate > 1e-4) {
+      float sumC = 0;
+      float sumS = 0;
+      int nPh = 0;
+
+      for (Gusano otro : gusanos) {
+        if (otro == this) continue;
+        Segmento h2 = otro.segmentos.get(0);
+        float d = dist(cabeza.x, cabeza.y, h2.x, h2.y);
+        if (d < rangoSocial) {
+          float w = 1.0 - (d / rangoSocial);
+          w = w * w; // emphasize close neighbors
+          sumC += cos(otro.phase) * w;
+          sumS += sin(otro.phase) * w;
+          nPh++;
+        }
+      }
+
+      if (nPh > 0 && (sumC*sumC + sumS*sumS) > 1e-8) {
+        float mean = atan2(sumS, sumC);
+        float dphi = atan2(sin(mean - phase), cos(mean - phase)); // shortest signed angle
+
+        float k = syncStrength * syncGate;
+        float step = constrain(dphi * k, -syncMaxStep, syncMaxStep);
+        phase += step;
+
+        // Keep phase in [0, TWO_PI)
+        if (phase < 0) phase += TWO_PI;
+        else if (phase >= TWO_PI) phase -= TWO_PI;
+      }
+    }
+
     // Build the final social steering vector
     PVector social = new PVector(0, 0);
 
     // Weights tuned for stability (avoid spiraling / clumping)
-    float wSep = 1.35;
-    float wAli = 0.55;
-    float wCoh = 0.30;
+    float wSep = 1.35 * lerp(1.18, 0.92, relax) * lerp(1.00, 1.18, userMode); // dart away a bit more
+    float wAli = 0.55 * lerp(0.85, 1.35, relax) * lerp(1.25, 0.62, userMode); // stop caring when user-dominant
+    float wCoh = 0.30 * lerp(0.80, 1.75, relax) * lerp(1.40, 0.55, userMode); // more schooling when social-dominant
 
     // Separation
     social.add(sep.x * wSep, sep.y * wSep);
@@ -242,7 +511,7 @@ class Gusano {
     // Soft clamp to keep motion stable
     float sMag = sqrt(social.x*social.x + social.y*social.y);
     if (sMag > 1e-6) {
-      float maxSocial = 1.6 + 0.7 * temperamento; // temperamento slightly affects boldness
+      float maxSocial = 1.2 + 0.4 * temperamento; // softer steering cap
       if (sMag > maxSocial) {
         social.x = (social.x / sMag) * maxSocial;
         social.y = (social.y / sMag) * maxSocial;
@@ -301,6 +570,9 @@ class Gusano {
     cabeza.x += social.x;
     cabeza.y += social.y;
 
+    // Soft wall repulsion (pre-clamp), prevents "cornered = frozen" feel
+    aplicarRepulsionParedes();
+
     // Update body segments (only active ones)
     for (int i = 1; i < min(segActivos, segmentos.size()); i++) {
       Segmento seg = segmentos.get(i);
@@ -308,6 +580,10 @@ class Gusano {
 
       PVector velFluidoSeg = fluido.obtenerVelocidad(seg.x, seg.y);
       float alturaFluidoSeg = fluido.obtenerAltura(seg.x, seg.y);
+      // Cache this segment's fluid sample for drawing (single sample per segment per frame)
+      cacheVx[i] = velFluidoSeg.x;
+      cacheVy[i] = velFluidoSeg.y;
+      cacheH[i]  = alturaFluidoSeg;
 
       float targetX = segAnterior.x + velFluidoSeg.x * 10;
       float targetY = segAnterior.y + velFluidoSeg.y * 10 - alturaFluidoSeg * 0.3;
@@ -318,8 +594,8 @@ class Gusano {
       {
         float tailT = (segmentos.size() <= 1) ? 1.0 : (i / (float)(segmentos.size() - 1));
 
-        PVector vF = fluido.obtenerVelocidad(seg.x, seg.y);
-        float drag = lerp(0.08, 0.22, tailT);
+        PVector vF = velFluidoSeg;
+        float drag = lerp(0.08, 0.22, tailT) + 0.10 * (1.0 - pulse) + 0.04 * (1.0 - arousal) - 0.02 * userMode;
 
         float mvx = seg.x - seg.prevX;
         float mvy = seg.y - seg.prevY;
@@ -340,7 +616,7 @@ class Gusano {
         // Directional wake: radius and strength grow slightly toward the tail
         if (sp > 0.10) {
           float radio = lerp(14, 30, tailT);
-          float fuerza = constrain(sp * lerp(1.2, 2.2, tailT), 0, 5.5);
+          float fuerza = constrain(sp * lerp(1.2, 2.2, tailT) * (1.0 + 0.8 * pulse + 0.6 * arousal) * lerp(1.0, 1.28, userMode) * spawnEase, 0, 7.0);
           fluido.perturbarDir(seg.x, seg.y, radio, mvx, mvy, fuerza);
         }
       }
@@ -362,8 +638,13 @@ class Gusano {
       s.actualizar();
     }
 
-    // ---- Update fluid cache ONCE per frame (per segment) ----
-    actualizarCacheFluido();
+    // Keep cached fluid values valid for inactive segments (match the last active segment)
+    int last = max(0, nAct - 1);
+    for (int i = nAct; i < numSegmentos; i++) {
+      cacheVx[i] = cacheVx[last];
+      cacheVy[i] = cacheVy[last];
+      cacheH[i]  = cacheH[last];
+    }
   }
 
   // Cache fluid velocity/height per segment (cheap: ~numSegmentos samples)
@@ -465,13 +746,21 @@ class Gusano {
     objetivoX = cabeza.x + cos(nuevoAngulo) * distancia;
     objetivoY = cabeza.y + sin(nuevoAngulo) * distancia;
 
-    // Match Segmento margins so the full jellyfish stays visible
-    objetivoX = constrain(objetivoX, 220, width - 220);
-    objetivoY = constrain(objetivoY, 240, height - 280);
+    // Use boundsInset to keep objectives within movement area
+    objetivoX = constrain(objetivoX, boundsInset, width - boundsInset);
+    objetivoY = constrain(objetivoY, boundsInset, height - boundsInset);
   }
 
   void dibujarForma() {
     strokeWeight(1);
+
+    // Precompute once per draw call (avoids per-point allocations/branch work)
+    boolean isFire = (id == 4);
+    // Fire gradient colors (white head -> orange/red tail)
+    color fireC0 = color(255, 255, 255);
+    color fireC1 = color(255, 230, 120);
+    color fireC2 = color(255, 120, 0);
+    color fireC3 = color(180, 20, 0);
 
     // As the jellyfish dies, it loses points (density) and segments (length)
     int nAct = constrain(segActivos, 1, numSegmentos);
@@ -490,15 +779,24 @@ class Gusano {
 
       float k = 5 * cos(x_param / 14) * cos(y_param / 30);
       float e = y_param / 8 - 13;
-      float d = sq(mag(k, e)) / 59 + 4;
+      float d = (k*k + e*e) / 59.0 + 4.0;
       float py = d * 45;
 
       float minPY = 100;
       float maxPY = 400;
       float verticalProgression = constrain(map(py, minPY, maxPY, 0, 1), 0, 1);
 
-      color cPoint = lerpColor(colorCabeza, colorCola, verticalProgression);
-      stroke(cPoint, 120 * fade);
+      color cPoint;
+
+      if (isFire) {
+        float u = verticalProgression;
+        if (u < 0.33)       cPoint = lerpColor(fireC0, fireC1, u / 0.33);
+        else if (u < 0.66)  cPoint = lerpColor(fireC1, fireC2, (u - 0.33) / 0.33);
+        else                cPoint = lerpColor(fireC2, fireC3, (u - 0.66) / 0.34);
+      } else {
+        cPoint = lerpColor(colorCabeza, colorCola, verticalProgression);
+      }
+      stroke(cPoint, 120 * fade * gusanosAlpha);
 
       // Map points only onto the currently active body
       int maxIdx = max(0, nAct - 1);
@@ -523,7 +821,7 @@ class Gusano {
       if (segmentIndex < nAct - 1) {
         vx = lerp(cacheVx[segmentIndex], cacheVx[segmentIndex + 1], segmentProgression);
         vy = lerp(cacheVy[segmentIndex], cacheVy[segmentIndex + 1], segmentProgression);
-        h  = lerp(cacheH[segmentIndex],  cacheH[segmentIndex + 1],  segmentProgression);
+        h  = lerp(cacheH[segmentIndex], cacheH[segmentIndex + 1], segmentProgression);
       } else {
         vx = cacheVx[segmentIndex];
         vy = cacheVy[segmentIndex];
@@ -533,26 +831,35 @@ class Gusano {
       x += vx * 0.5;
       y += vy * 0.5 - h * 0.2;
 
-      dibujarPuntoForma(x_param, y_param, x, y);
+      // For the "digital organism" variant (id == 4), use the original web-style
+      // parametrization x=i, y=i/235 so the pattern reads correctly.
+      float xIn = x_param;
+      float yIn = y_param;
+      if (id == 4) {
+        xIn = i;
+        yIn = i / 235.0;
+      }
+
+      dibujarPuntoForma(xIn, yIn, x, y);
     }
 
     // Head fades slightly when low life
     float life01 = constrain(vida / vidaMax, 0, 1);
     stroke(colorCabeza, (120 + 100 * life01) * fade);
-    strokeWeight(4);
+    strokeWeight(max(1, 4 * shapeScale));
     point(segmentos.get(0).x, segmentos.get(0).y);
     strokeWeight(1);
   }
 
   void dibujarPuntoForma(float x, float y, float cx, float cy) {
     float k, e, d, q, px, py;
-    float headOffset = 184;
+    float headOffset = 184; // may be overridden per-shape
 
     switch(id) {
     case 0:
       k = 5 * cos(x / 14) * cos(y / 30);
       e = y / 8 - 13;
-      d = sq(mag(k, e)) / 59 + 4;
+      d = (k*k + e*e) / 59.0 + 4.0;
       q = - 3 * sin(atan2(k, e) * e) + k * (3 + 4 / d * sin(d * d - t * 2));
       px = q + 0.9;
       py = d * 45;
@@ -561,7 +868,7 @@ class Gusano {
     case 1:
       k = 6 * cos(x / 12) * cos(y / 25);
       e = y / 7 - 15;
-      d = sq(mag(k, e)) / 50 + 3;
+      d = (k*k + e*e) / 50.0 + 3.0;
       q = - 2 * sin(atan2(k, e) * e) + k * (2 + 5 / d * sin(d * d - t * 1.5));
       px = q + 1.2;
       py = d * 40;
@@ -570,7 +877,7 @@ class Gusano {
     case 2:
       k = 4 * cos(x / 16) * cos(y / 35);
       e = y / 9 - 11;
-      d = sq(mag(k, e)) / 65 + 5;
+      d = (k*k + e*e) / 65.0 + 5.0;
       q = - 4 * sin(atan2(k, e) * e) + k * (4 + 3 / d * sin(d * d - t * 2.5));
       px = q + 0.6;
       py = d * 50;
@@ -579,46 +886,69 @@ class Gusano {
     case 3:
       k = 7 * cos(x / 10) * cos(y / 20);
       e = y / 6 - 17;
-      d = sq(mag(k, e)) / 45 + 2;
+      d = (k*k + e*e) / 45.0 + 2.0;
       q = - 5 * sin(atan2(k, e) * e) + k * (5 + 6 / d * sin(d * d - t * 3));
       px = q + 1.5;
       py = d * 35;
       break;
 
     case 4:
-      k = 7 * cos(x / 10) * cos(y / 3);
-      e = y / 5 - 17;
-      d = sq(mag(k, e)) / 45 + 2;
-      q = - 5 * sin(atan2(k, e) * e) + k * (5 + 6 / d * sin(d * d - t * 3));
-      px = q + 1.5;
-      py = d * 35;
-      break;
+      {
+        // Digital organism (ported from the Processing web/p5 snippet)
+        // a=(x,y,d=mag(k=(4+sin(y*2-t)*3)*cos(x/29),e=y/8-13))=>
+        // point((q=3*sin(k*2)+.3/k+sin(y/25)*k*(9+4*sin(e*9-d*3+t*2)))+30*cos(c=d-t)+200,
+        //       q*sin(c)+d*39-220)
+
+        float k0 = (4.0 + sin(y * 2.0 - t) * 3.0) * cos(x / 29.0);
+        float e0 = y / 8.0 - 13.0;
+        float d0 = mag(k0, e0);
+
+        // Safe reciprocal for 0.3/k
+        float kk = (abs(k0) < 1e-3) ? ((k0 < 0) ? -1e-3 : 1e-3) : k0;
+
+        float q0 = 3.0 * sin(k0 * 2.0)
+          + 0.3 / kk
+          + sin(y / 25.0) * k0 * (9.0 + 4.0 * sin(e0 * 9.0 - d0 * 3.0 + t * 2.0));
+
+        float c0 = d0 - t;
+
+        // Remove the original +200 / -220 screen centering constants;
+        // we place this shape around (cx, cy) like the other variants.
+        px = q0 + 30.0 * cos(c0);
+        py = q0 * sin(c0) + d0 * 39.0;
+
+        // Slightly different head offset so it sits nicely on the body
+        headOffset = 220;
+        break;
+      }
 
     default:
       k = 5 * cos(x / 14) * cos(y / 30);
       e = y / 8 - 13;
-      d = sq(mag(k, e)) / 59 + 4;
+      d = (k*k + e*e) / 59.0 + 4.0;
       q = - 3 * sin(atan2(k, e) * e) + k * (3 + 4 / d * sin(d * d - t * 2));
       px = q + 1.6;
       py = d * 45;
       break;
     }
 
-    point(px + cx, py - headOffset + cy);
+    float s = shapeScale;
+    point(px * s + cx, (py - headOffset) * s + cy);
   }
 
   // Respawn / reset body to a newborn that grows back
   void renacer() {
-    float x = random(220, width - 220);
-    float y = random(240, height - 280);
+    float x = random(boundsInset, width - boundsInset);
+    float y = random(boundsInset, height - boundsInset);
     ageFrames = 0;
 
     distribuirSegmentos(x, y);
 
-    objetivoX = random(220, width - 220);
-    objetivoY = random(240, height - 280);
+    objetivoX = random(boundsInset, width - boundsInset);
+    objetivoY = random(boundsInset, height - boundsInset);
     cambioObjetivo = 0;
     frecuenciaCambio = random(80, 120);
+
 
     // New personality each life
     temperamento = random(-1, 1);
@@ -646,5 +976,82 @@ class Gusano {
       s.prevX = px;
       s.prevY = py;
     }
+  }
+  // ------------------------------------------------------------
+  // Soft wall repulsion using the same margins as Segmento.actualizar()
+  // Nudges segments inward BEFORE the clamp happens.
+  // Main knobs: wallRange, wallPush
+  // Also moves prevX/prevY to avoid fake "teleport" wakes.
+  // ------------------------------------------------------------
+  void aplicarRepulsionParedes() {
+    int nAct = constrain(segActivos, 1, segmentos.size());
+
+    float left   = boundsInset;
+    float right  = width - boundsInset;
+    float top    = boundsInset;
+    float bottom = height - boundsInset;
+
+    float r = max(1, wallRange);
+
+    for (int i = 0; i < nAct; i++) {
+      Segmento s = segmentos.get(i);
+
+      // Stronger on head, softer on tail
+      float tSeg = (nAct <= 1) ? 0 : (i / (float)(nAct - 1));
+      float wSeg = lerp(1.0, 0.35, tSeg);
+
+      float pushX = 0;
+      float pushY = 0;
+
+      float dL = s.x - left;
+      float dR = right - s.x;
+      float dT = s.y - top;
+      float dB = bottom - s.y;
+
+      if (dL < r) {
+        float w = 1.0 - dL / r;
+        w = w * w;
+        pushX += w;
+      }
+      if (dR < r) {
+        float w = 1.0 - dR / r;
+        w = w * w;
+        pushX -= w;
+      }
+      if (dT < r) {
+        float w = 1.0 - dT / r;
+        w = w * w;
+        pushY += w;
+      }
+      if (dB < r) {
+        float w = 1.0 - dB / r;
+        w = w * w;
+        pushY -= w;
+      }
+
+      float pm = sqrt(pushX*pushX + pushY*pushY);
+      if (pm > 1e-6) {
+        pushX /= pm;
+        pushY /= pm;
+
+        float strength = wallPush * wSeg;
+        // Slightly stronger when relaxed so they don't lazily stick
+        strength *= (0.85 + 0.35 * (1.0 - arousal));
+
+        float dx = pushX * strength;
+        float dy = pushY * strength;
+
+        s.x += dx;
+        s.y += dy;
+        s.prevX += dx;
+        s.prevY += dy;
+      }
+    }
+  }
+
+  // smoothstep 0..1 -> 0..1
+  float smoothstep(float x) {
+    x = constrain(x, 0, 1);
+    return x * x * (3.0 - 2.0 * x);
   }
 }

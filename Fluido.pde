@@ -11,9 +11,10 @@ class Fluido {
 
   float offsetX, offsetY;
 
-  float rigidez = 0.1;
-  float propagacion = 0.04;
-  float waveDrag = 0.015;
+  float rigidez = 0.035;
+  float propagacion = 0.06; // calmer: less aggressive spread
+  float waveDrag = 0.11;     // more damping (ripples fade sooner)
+  float influenciaVel = 0.35;
 
   float[][] tmpVx;
   float[][] tmpVy;
@@ -21,6 +22,11 @@ class Fluido {
   // --- render-only helpers (no physics changes) ---
   PGraphics floorTex;      // subtle "pond bottom" texture (procedural)
   float floorScroll = 0;   // tiny drift (purely visual)
+
+  // Half-res highlight buffer to smooth out visible triangle facets
+  // (blur only the lighting layer, not the whole scene)
+  PGraphics hlTex;
+  int hlDownscale = 2; // 2 = half-res (recommended). 1 = full-res.
   // ----------------------------------------------
 
   Fluido(int c, int f, float esp) {
@@ -66,6 +72,11 @@ class Fluido {
     // Procedural "pond bottom" texture (optional; no external assets)
     floorTex = createGraphics((int)(cols * espaciado), (int)(filas * espaciado));
     generarTexturaFondo();
+
+    // Highlight buffer (half-res) to smooth ripple lighting
+    int hw = max(1, (int)(cols * espaciado / (float)hlDownscale));
+    int hh = max(1, (int)(filas * espaciado / (float)hlDownscale));
+    hlTex = createGraphics(hw, hh);
   }
 
   void generarTexturaFondo() {
@@ -151,36 +162,44 @@ class Fluido {
     }
   }
 
-  void perturbar(float x, float y, float radio, float fuerza) {
-    float gx = (x - offsetX) / espaciado;
-    float gy = (y - offsetY) / espaciado;
-    float gr = radio / espaciado;
+void perturbar(float x, float y, float radio, float fuerza) {
+  float gx = (x - offsetX) / espaciado;
+  float gy = (y - offsetY) / espaciado;
+  float gr = radio / espaciado;
 
-    int iMin = constrain(floor(gx - gr) - 1, 0, cols - 1);
-    int iMax = constrain(ceil (gx + gr) + 1, 0, cols - 1);
-    int jMin = constrain(floor(gy - gr) - 1, 0, filas - 1);
-    int jMax = constrain(ceil (gy + gr) + 1, 0, filas - 1);
+  int iMin = constrain(floor(gx - gr) - 1, 0, cols - 1);
+  int iMax = constrain(ceil (gx + gr) + 1, 0, cols - 1);
+  int jMin = constrain(floor(gy - gr) - 1, 0, filas - 1);
+  int jMax = constrain(ceil (gy + gr) + 1, 0, filas - 1);
 
-    float r2 = radio * radio;
+  float r2 = radio * radio;
 
-    for (int i = iMin; i <= iMax; i++) {
-      for (int j = jMin; j <= jMax; j++) {
-        Particula p = particulas[i][j];
-        float dx = x - p.x;
-        float dy = y - p.y;
-        float d2 = dx * dx + dy * dy;
+  for (int i = iMin; i <= iMax; i++) {
+    for (int j = jMin; j <= jMax; j++) {
+      Particula p = particulas[i][j];
+      float dx = p.x - x;
+      float dy = p.y - y;
+      float d2 = dx * dx + dy * dy;
 
-        if (d2 < r2) {
-          float d = sqrt(d2);
-          float intensidad = fuerza * (1.0 - d / radio);
+      if (d2 < r2) {
+        float d = sqrt(max(d2, 1e-6));
+        float w = 1.0 - d / radio;
+        w = w * w; // smoother falloff
 
-          p.vy += intensidad;
-          float angulo = atan2(y - p.y, x - p.x);
-          p.vx += cos(angulo) * intensidad * 0.3;
-        }
+        float intensidad = fuerza * w;
+
+        // radial push (water-like)
+        float nx = dx / d;
+        float ny = dy / d;
+        p.vx += nx * intensidad * 0.40;
+        p.vy += ny * intensidad * 0.40;
+
+        // tiny upward pressure bias (subtle)
+        p.vy += intensidad * 0.06;
       }
     }
   }
+}
 
   // Directional wake perturbation (in addition to perturbar)
   void perturbarDir(float x, float y, float radio, float dirX, float dirY, float fuerza) {
@@ -223,7 +242,7 @@ class Fluido {
           float anis = 0.25 + 0.75 * behind;
           w *= anis;
 
-          float push = f * w;
+          float push = f * w * 0.85; // slightly weaker coupling so gusanos feel less "blocked"
 
           // Main directional push
           p.vx += dirX * push;
@@ -254,7 +273,7 @@ class Fluido {
 
     // Render-only subdivision: increases apparent fluid resolution without increasing physics cost.
     // 1 = current behavior, 2 = smoother (recommended), 3 = even smoother but more vertices.
-    int renderSub = 2;
+    int renderSub = 3;
 
     // ------------------------------------------------------------
     // Combo:
@@ -344,64 +363,98 @@ class Fluido {
     rect(offsetX, offsetY, w, h);
 
     // 3) Slope-based highlights (waves show as lighting, not contour lines)
-    pushStyle();
-    blendMode(ADD);
-    noStroke();
+    // Render highlights to a half-res buffer, blur slightly, then additively composite.
+    if (hlTex != null) {
+      float inv = 1.0 / (float)hlDownscale;
 
-    float hScale = 1.0;
-    float slopeGain = 430;   // stronger highlights so waves read as light
-    float crestPow  = 1.7;   // slightly softer = smoother light bands
-    float flowGain  = 55;    // makes moving water stand out (speed-based)
+      hlTex.beginDraw();
+      // Transparent background (keep only highlights)
+      hlTex.clear();
+      hlTex.noStroke();
+      hlTex.blendMode(ADD);
 
-    for (int j = 0; j < filas - 1; j++) {
-      beginShape(TRIANGLE_STRIP);
-      for (int i = 0; i < cols - 1; i++) {
-        Particula a0 = particulas[i][j];
-        Particula b0 = particulas[i + 1][j];
-        Particula a1 = particulas[i][j + 1];
-        Particula b1 = particulas[i + 1][j + 1];
+      float hScale = 1.0;
+      float slopeGain = 430;   // stronger highlights so waves read as light
+      float crestPow  = 1.7;   // slightly softer = smoother light bands
+      float flowGain  = 55;    // makes moving water stand out (speed-based)
 
-        float s_a0 = slopeMag(i,     j) * hScale;
-        float s_b0 = slopeMag(i + 1, j) * hScale;
-        float s_a1 = slopeMag(i,     j + 1) * hScale;
-        float s_b1 = slopeMag(i + 1, j + 1) * hScale;
+      for (int j = 0; j < filas - 1; j++) {
+        hlTex.beginShape(TRIANGLE_STRIP);
+        for (int i = 0; i < cols - 1; i++) {
+          Particula a0 = particulas[i][j];
+          Particula b0 = particulas[i + 1][j];
+          Particula a1 = particulas[i][j + 1];
+          Particula b1 = particulas[i + 1][j + 1];
 
-        float v_a0 = sqrt(a0.vx*a0.vx + a0.vy*a0.vy);
-        float v_b0 = sqrt(b0.vx*b0.vx + b0.vy*b0.vy);
-        float v_a1 = sqrt(a1.vx*a1.vx + a1.vy*a1.vy);
-        float v_b1 = sqrt(b1.vx*b1.vx + b1.vy*b1.vy);
+          float s_a0 = slopeMag(i,     j) * hScale;
+          float s_b0 = slopeMag(i + 1, j) * hScale;
+          float s_a1 = slopeMag(i,     j + 1) * hScale;
+          float s_b1 = slopeMag(i + 1, j + 1) * hScale;
 
-        int s0 = (i == 0) ? 0 : 1; // avoid duplicating the seam vertex
-        for (int s = s0; s <= renderSub; s++) {
-          float tt = s / (float)renderSub;
+          float v_a0 = sqrt(a0.vx*a0.vx + a0.vy*a0.vy);
+          float v_b0 = sqrt(b0.vx*b0.vx + b0.vy*b0.vy);
+          float v_a1 = sqrt(a1.vx*a1.vx + a1.vy*a1.vy);
+          float v_b1 = sqrt(b1.vx*b1.vx + b1.vy*b1.vy);
 
-          // Interpolated positions along edges
-          float x0 = lerp(a0.x, b0.x, tt);
-          float y0 = lerp(a0.y, b0.y, tt);
-          float x1 = lerp(a1.x, b1.x, tt);
-          float y1 = lerp(a1.y, b1.y, tt);
+          int s0 = (i == 0) ? 0 : 1; // avoid duplicating the seam vertex
+          for (int s = s0; s <= renderSub; s++) {
+            float tt = s / (float)renderSub;
 
-          // Interpolated slope + speed
-          float sTop = lerp(s_a0, s_b0, tt);
-          float sBot = lerp(s_a1, s_b1, tt);
-          float vTop = lerp(v_a0, v_b0, tt);
-          float vBot = lerp(v_a1, v_b1, tt);
+            // Interpolated positions along edges
+            float x0 = lerp(a0.x, b0.x, tt);
+            float y0 = lerp(a0.y, b0.y, tt);
+            float x1 = lerp(a1.x, b1.x, tt);
+            float y1 = lerp(a1.y, b1.y, tt);
 
-          float hl0 = pow(constrain(sTop * 0.14, 0, 1), crestPow) * slopeGain + constrain(vTop * flowGain, 0, 120);
-          float hl1 = pow(constrain(sBot * 0.14, 0, 1), crestPow) * slopeGain + constrain(vBot * flowGain, 0, 120);
+            // Convert to local coords within the fluid rect, then downscale
+            float lx0 = (x0 - offsetX) * inv;
+            float ly0 = (y0 - offsetY) * inv;
+            float lx1 = (x1 - offsetX) * inv;
+            float ly1 = (y1 - offsetY) * inv;
 
-          fill(80 + hl0 * 0.25, 140 + hl0 * 0.35, 220 + hl0 * 0.55, constrain(hl0 * 0.98, 0, 200));
-          vertex(x0, y0);
+            // Interpolated slope + speed
+            float sTop = lerp(s_a0, s_b0, tt);
+            float sBot = lerp(s_a1, s_b1, tt);
+            float vTop = lerp(v_a0, v_b0, tt);
+            float vBot = lerp(v_a1, v_b1, tt);
 
-          fill(80 + hl1 * 0.25, 140 + hl1 * 0.35, 220 + hl1 * 0.55, constrain(hl1 * 0.98, 0, 200));
-          vertex(x1, y1);
+            float hl0 = pow(constrain(sTop * 0.14, 0, 1), crestPow) * slopeGain + constrain(vTop * flowGain, 0, 120);
+            float hl1 = pow(constrain(sBot * 0.14, 0, 1), crestPow) * slopeGain + constrain(vBot * flowGain, 0, 120);
+
+            // Ocean-blue gradient for highlights (deeper -> cyan/white)
+            float u0 = constrain(hl0 / 220.0, 0, 1);
+            float u1 = constrain(hl1 / 220.0, 0, 1);
+
+            color deep  = color(12,  50, 120);
+            color light = color(210, 245, 255);
+
+            color c0 = lerpColor(deep, light, pow(u0, 0.85));
+            color c1 = lerpColor(deep, light, pow(u1, 0.85));
+
+            hlTex.fill(c0, constrain(hl0 * 1.10, 0, 220));
+            hlTex.vertex(lx0, ly0);
+
+            hlTex.fill(c1, constrain(hl1 * 1.10, 0, 220));
+            hlTex.vertex(lx1, ly1);
+          }
         }
+        hlTex.endShape();
       }
-      endShape();
-    }
 
-    blendMode(BLEND);
-    popStyle();
+      hlTex.blendMode(BLEND);
+      // Slight blur to hide triangle facets (cheap because hlTex is half-res)
+      hlTex.filter(BLUR, 1);
+      hlTex.endDraw();
+
+      // Composite highlights back onto main canvas
+      pushStyle();
+      blendMode(ADD);
+      tint(255, 245);
+      image(hlTex, offsetX, offsetY, w, h);
+      noTint();
+      blendMode(BLEND);
+      popStyle();
+    }
 
     noClip();
     popStyle();
@@ -703,7 +756,8 @@ class Fluido {
     float vy0 = lerp(p00.vy, p10.vy, sx);
     float vy1 = lerp(p01.vy, p11.vy, sx);
 
-    return new PVector(lerp(vx0, vx1, sy), lerp(vy0, vy1, sy));
+    return new PVector(lerp(vx0, vx1, sy) * influenciaVel,
+                   lerp(vy0, vy1, sy) * influenciaVel);
   }
 
   float obtenerAltura(float x, float y) {
