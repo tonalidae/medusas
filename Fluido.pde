@@ -252,6 +252,10 @@ class Fluido {
 
     floorScroll += 0.15;
 
+    // Render-only subdivision: increases apparent fluid resolution without increasing physics cost.
+    // 1 = current behavior, 2 = smoother (recommended), 3 = even smoother but more vertices.
+    int renderSub = 2;
+
     // ------------------------------------------------------------
     // Combo:
     // 1) Caustics-style bottom texture with UV distortion driven by the field
@@ -274,32 +278,59 @@ class Fluido {
       beginShape(TRIANGLE_STRIP);
       texture(floorTex);
 
-      for (int i = 0; i < cols; i++) {
-        Particula p0 = particulas[i][j];
-        Particula p1 = particulas[i][j + 1];
+      for (int i = 0; i < cols - 1; i++) {
+        Particula a0 = particulas[i][j];
+        Particula b0 = particulas[i + 1][j];
+        Particula a1 = particulas[i][j + 1];
+        Particula b1 = particulas[i + 1][j + 1];
 
         // Height gradient (for refraction direction)
-        float gx0 = gradX(i, j);
-        float gy0 = gradY(i, j);
-        float gx1 = gradX(i, j + 1);
-        float gy1 = gradY(i, j + 1);
+        float gx_a0 = gradX(i,     j);
+        float gy_a0 = gradY(i,     j);
+        float gx_b0 = gradX(i + 1, j);
+        float gy_b0 = gradY(i + 1, j);
+        float gx_a1 = gradX(i,     j + 1);
+        float gy_a1 = gradY(i,     j + 1);
+        float gx_b1 = gradX(i + 1, j + 1);
+        float gy_b1 = gradY(i + 1, j + 1);
 
-        // Distortion amounts (boosted so ripples show even on dark backgrounds)
-        // Mix: flow (vx/vy) + slope (grad) so both moving water and crests refract.
-        float du0 = p0.vx * 34 + gx0 * 110;
-        float dv0 = p0.vy * 34 + gy0 * 110;
-        float du1 = p1.vx * 34 + gx1 * 110;
-        float dv1 = p1.vy * 34 + gy1 * 110;
+        // Distortion drivers (flow + slope)
+        float du_a0 = a0.vx * 34 + gx_a0 * 110;
+        float dv_a0 = a0.vy * 34 + gy_a0 * 110;
+        float du_b0 = b0.vx * 34 + gx_b0 * 110;
+        float dv_b0 = b0.vy * 34 + gy_b0 * 110;
 
-        // Stable UV base from grid coordinates
-        float u0 = i * espaciado + scrollU + du0;
-        float v0 = j * espaciado + scrollV + dv0;
-        float u1 = i * espaciado + scrollU + du1;
-        float v1 = (j + 1) * espaciado + scrollV + dv1;
+        float du_a1 = a1.vx * 34 + gx_a1 * 110;
+        float dv_a1 = a1.vy * 34 + gy_a1 * 110;
+        float du_b1 = b1.vx * 34 + gx_b1 * 110;
+        float dv_b1 = b1.vy * 34 + gy_b1 * 110;
 
-        vertex(p0.x, p0.y, u0, v0);
-        vertex(p1.x, p1.y, u1, v1);
+        int s0 = (i == 0) ? 0 : 1; // avoid duplicating the seam vertex
+        for (int s = s0; s <= renderSub; s++) {
+          float tt = s / (float)renderSub;
+
+          // Interpolate positions along the top/bottom edges
+          float x0 = lerp(a0.x, b0.x, tt);
+          float y0 = lerp(a0.y, b0.y, tt);
+          float x1 = lerp(a1.x, b1.x, tt);
+          float y1 = lerp(a1.y, b1.y, tt);
+
+          // Stable UV base from sub-cell coordinate
+          float baseU = (i + tt) * espaciado;
+          float baseV0 = j * espaciado;
+          float baseV1 = (j + 1) * espaciado;
+
+          // Interpolate distortion
+          float du0 = lerp(du_a0, du_b0, tt);
+          float dv0 = lerp(dv_a0, dv_b0, tt);
+          float du1 = lerp(du_a1, du_b1, tt);
+          float dv1 = lerp(dv_a1, dv_b1, tt);
+
+          vertex(x0, y0, baseU + scrollU + du0, baseV0 + scrollV + dv0);
+          vertex(x1, y1, baseU + scrollU + du1, baseV1 + scrollV + dv1);
+        }
       }
+
       endShape();
     }
 
@@ -324,25 +355,47 @@ class Fluido {
 
     for (int j = 0; j < filas - 1; j++) {
       beginShape(TRIANGLE_STRIP);
-      for (int i = 0; i < cols; i++) {
-        Particula p0 = particulas[i][j];
-        Particula p1 = particulas[i][j + 1];
+      for (int i = 0; i < cols - 1; i++) {
+        Particula a0 = particulas[i][j];
+        Particula b0 = particulas[i + 1][j];
+        Particula a1 = particulas[i][j + 1];
+        Particula b1 = particulas[i + 1][j + 1];
 
-        float s0 = slopeMag(i, j) * hScale;
-        float s1 = slopeMag(i, j + 1) * hScale;
+        float s_a0 = slopeMag(i,     j) * hScale;
+        float s_b0 = slopeMag(i + 1, j) * hScale;
+        float s_a1 = slopeMag(i,     j + 1) * hScale;
+        float s_b1 = slopeMag(i + 1, j + 1) * hScale;
 
-        // Add a small contribution from local flow speed so moving water pops
-        float v0 = sqrt(p0.vx*p0.vx + p0.vy*p0.vy);
-        float v1 = sqrt(p1.vx*p1.vx + p1.vy*p1.vy);
+        float v_a0 = sqrt(a0.vx*a0.vx + a0.vy*a0.vy);
+        float v_b0 = sqrt(b0.vx*b0.vx + b0.vy*b0.vy);
+        float v_a1 = sqrt(a1.vx*a1.vx + a1.vy*a1.vy);
+        float v_b1 = sqrt(b1.vx*b1.vx + b1.vy*b1.vy);
 
-        float hl0 = pow(constrain(s0 * 0.14, 0, 1), crestPow) * slopeGain + constrain(v0 * flowGain, 0, 120);
-        float hl1 = pow(constrain(s1 * 0.14, 0, 1), crestPow) * slopeGain + constrain(v1 * flowGain, 0, 120);
+        int s0 = (i == 0) ? 0 : 1; // avoid duplicating the seam vertex
+        for (int s = s0; s <= renderSub; s++) {
+          float tt = s / (float)renderSub;
 
-        fill(80 + hl0 * 0.25, 140 + hl0 * 0.35, 220 + hl0 * 0.55, constrain(hl0 * 0.98, 0, 200));
-        vertex(p0.x, p0.y);
+          // Interpolated positions along edges
+          float x0 = lerp(a0.x, b0.x, tt);
+          float y0 = lerp(a0.y, b0.y, tt);
+          float x1 = lerp(a1.x, b1.x, tt);
+          float y1 = lerp(a1.y, b1.y, tt);
 
-        fill(80 + hl1 * 0.25, 140 + hl1 * 0.35, 220 + hl1 * 0.55, constrain(hl1 * 0.98, 0, 200));
-        vertex(p1.x, p1.y);
+          // Interpolated slope + speed
+          float sTop = lerp(s_a0, s_b0, tt);
+          float sBot = lerp(s_a1, s_b1, tt);
+          float vTop = lerp(v_a0, v_b0, tt);
+          float vBot = lerp(v_a1, v_b1, tt);
+
+          float hl0 = pow(constrain(sTop * 0.14, 0, 1), crestPow) * slopeGain + constrain(vTop * flowGain, 0, 120);
+          float hl1 = pow(constrain(sBot * 0.14, 0, 1), crestPow) * slopeGain + constrain(vBot * flowGain, 0, 120);
+
+          fill(80 + hl0 * 0.25, 140 + hl0 * 0.35, 220 + hl0 * 0.55, constrain(hl0 * 0.98, 0, 200));
+          vertex(x0, y0);
+
+          fill(80 + hl1 * 0.25, 140 + hl1 * 0.35, 220 + hl1 * 0.55, constrain(hl1 * 0.98, 0, 200));
+          vertex(x1, y1);
+        }
       }
       endShape();
     }
