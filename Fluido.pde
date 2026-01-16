@@ -15,6 +15,7 @@ class Fluido {
   float propagacion = 0.04;
   float waveDrag = 0.015;
 
+  float[][] tmpVx;
   float[][] tmpVy;
 
   // --- render-only helpers (no physics changes) ---
@@ -33,6 +34,7 @@ class Fluido {
     offsetX = (width  - anchoMalla) / 2.0;
     offsetY = (height - altoMalla)  / 2.0;
 
+    tmpVx = new float[cols][filas];
     tmpVy = new float[cols][filas];
 
     particulas = new Particula[cols][filas];
@@ -114,19 +116,36 @@ class Fluido {
   }
 
   void propagarOndas() {
+    // Smooth/propagate BOTH vx and vy so wakes actually move through the medium.
+    // This is still a cheap "diffusion" step, not a full fluid solver.
     for (int i = 1; i < cols - 1; i++) {
       for (int j = 1; j < filas - 1; j++) {
-        float v  = particulas[i][j].vy;
-        float av = (particulas[i - 1][j].vy + particulas[i + 1][j].vy +
-          particulas[i][j - 1].vy + particulas[i][j + 1].vy) * 0.25;
+        Particula p = particulas[i][j];
 
-        float nv = v + (av - v) * propagacion;
-        nv *= (1.0 - waveDrag);
-        tmpVy[i][j] = nv;
+        float vx = p.vx;
+        float vy = p.vy;
+
+        float avx = (particulas[i - 1][j].vx + particulas[i + 1][j].vx +
+                     particulas[i][j - 1].vx + particulas[i][j + 1].vx) * 0.25;
+        float avy = (particulas[i - 1][j].vy + particulas[i + 1][j].vy +
+                     particulas[i][j - 1].vy + particulas[i][j + 1].vy) * 0.25;
+
+        float nvx = vx + (avx - vx) * propagacion;
+        float nvy = vy + (avy - vy) * propagacion;
+
+        // keep the old damping behavior but apply it to both components
+        float damp = (1.0 - waveDrag);
+        nvx *= damp;
+        nvy *= damp;
+
+        tmpVx[i][j] = nvx;
+        tmpVy[i][j] = nvy;
       }
     }
+
     for (int i = 1; i < cols - 1; i++) {
       for (int j = 1; j < filas - 1; j++) {
+        particulas[i][j].vx = tmpVx[i][j];
         particulas[i][j].vy = tmpVy[i][j];
       }
     }
@@ -195,10 +214,29 @@ class Fluido {
           float w = 1.0 - d / r;
           w *= w;
 
+          // Anisotropy: stronger wake behind the motion direction (capsule-ish feel)
+          float rx = p.x - x;
+          float ry = p.y - y;
+          float dot = rx * dirX + ry * dirY;
+          // dot < 0 means "behind" (opposite the direction of motion)
+          float behind = constrain((-dot) / (r * 0.75), 0, 1);
+          float anis = 0.25 + 0.75 * behind;
+          w *= anis;
+
           float push = f * w;
+
+          // Main directional push
           p.vx += dirX * push;
           p.vy += dirY * push;
 
+          // Tiny trailing swirl (adds life without full fluid sim)
+          float perpX = -dirY;
+          float perpY =  dirX;
+          float swirl = push * 0.08 * behind;
+          p.vx += perpX * swirl;
+          p.vy += perpY * swirl;
+
+          // Slight vertical pressure component (kept subtle)
           p.vy += push * 0.08;
         }
       }
@@ -226,7 +264,8 @@ class Fluido {
     pushStyle();
     noStroke();
     textureMode(IMAGE);
-    tint(255, 210);
+    // Slightly brighter so distortion reads on dark backgrounds
+    tint(255, 232);
 
     float scrollU = sin(floorScroll * 0.010) * 8;
     float scrollV = cos(floorScroll * 0.008) * 8;
@@ -245,11 +284,12 @@ class Fluido {
         float gx1 = gradX(i, j + 1);
         float gy1 = gradY(i, j + 1);
 
-        // Distortion amounts (tuned to be noticeable but not noisy)
-        float du0 = p0.vx * 18 + gx0 * 70;
-        float dv0 = p0.vy * 18 + gy0 * 70;
-        float du1 = p1.vx * 18 + gx1 * 70;
-        float dv1 = p1.vy * 18 + gy1 * 70;
+        // Distortion amounts (boosted so ripples show even on dark backgrounds)
+        // Mix: flow (vx/vy) + slope (grad) so both moving water and crests refract.
+        float du0 = p0.vx * 34 + gx0 * 110;
+        float dv0 = p0.vy * 34 + gy0 * 110;
+        float du1 = p1.vx * 34 + gx1 * 110;
+        float dv1 = p1.vy * 34 + gy1 * 110;
 
         // Stable UV base from grid coordinates
         float u0 = i * espaciado + scrollU + du0;
@@ -268,7 +308,8 @@ class Fluido {
 
     // 2) Subtle water veil (keeps the scene cohesive)
     noStroke();
-    fill(18, 24, 44, 12);
+    // Keep it subtle so highlights remain visible
+    fill(18, 24, 44, 8);
     rect(offsetX, offsetY, w, h);
 
     // 3) Slope-based highlights (waves show as lighting, not contour lines)
@@ -277,8 +318,9 @@ class Fluido {
     noStroke();
 
     float hScale = 1.0;
-    float slopeGain = 320;   // highlight strength
-    float crestPow  = 1.8;   // sharpness of highlights
+    float slopeGain = 430;   // stronger highlights so waves read as light
+    float crestPow  = 1.7;   // slightly softer = smoother light bands
+    float flowGain  = 55;    // makes moving water stand out (speed-based)
 
     for (int j = 0; j < filas - 1; j++) {
       beginShape(TRIANGLE_STRIP);
@@ -289,13 +331,17 @@ class Fluido {
         float s0 = slopeMag(i, j) * hScale;
         float s1 = slopeMag(i, j + 1) * hScale;
 
-        float hl0 = pow(constrain(s0 * 0.14, 0, 1), crestPow) * slopeGain;
-        float hl1 = pow(constrain(s1 * 0.14, 0, 1), crestPow) * slopeGain;
+        // Add a small contribution from local flow speed so moving water pops
+        float v0 = sqrt(p0.vx*p0.vx + p0.vy*p0.vy);
+        float v1 = sqrt(p1.vx*p1.vx + p1.vy*p1.vy);
 
-        fill(80 + hl0 * 0.25, 140 + hl0 * 0.35, 220 + hl0 * 0.55, constrain(hl0 * 0.95, 0, 180));
+        float hl0 = pow(constrain(s0 * 0.14, 0, 1), crestPow) * slopeGain + constrain(v0 * flowGain, 0, 120);
+        float hl1 = pow(constrain(s1 * 0.14, 0, 1), crestPow) * slopeGain + constrain(v1 * flowGain, 0, 120);
+
+        fill(80 + hl0 * 0.25, 140 + hl0 * 0.35, 220 + hl0 * 0.55, constrain(hl0 * 0.98, 0, 200));
         vertex(p0.x, p0.y);
 
-        fill(80 + hl1 * 0.25, 140 + hl1 * 0.35, 220 + hl1 * 0.55, constrain(hl1 * 0.95, 0, 180));
+        fill(80 + hl1 * 0.25, 140 + hl1 * 0.35, 220 + hl1 * 0.55, constrain(hl1 * 0.98, 0, 200));
         vertex(p1.x, p1.y);
       }
       endShape();

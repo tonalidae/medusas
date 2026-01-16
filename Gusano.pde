@@ -12,6 +12,16 @@ class Gusano {
   float frecuenciaCambio;
   int id;
 
+  // --- Social interaction (medusa-medusa) ---
+  // temperamento: -1 = agresiva (tiende a repeler), +1 = empática (tiende a acercarse)
+  float temperamento;
+  float faseHumor;
+
+  // Social tuning (pure steering, no physics API changes)
+  float rangoSocial = 260;
+  float rangoRepulsion = 120;
+  float rangoChoque = 70;
+
   Gusano(float x, float y, color cHead, color cTail, int id_) {
     segmentos = new ArrayList<Segmento>();
     colorCabeza = cHead;
@@ -26,6 +36,10 @@ class Gusano {
     objetivoY = random(100, height-100);
     cambioObjetivo = 0;
     frecuenciaCambio = random(80, 120);
+
+    // Random personality per jellyfish
+    temperamento = random(-1, 1);
+    faseHumor = random(TWO_PI);
   }
 
   void actualizar() {
@@ -46,14 +60,117 @@ class Gusano {
     float objetivoConFluidoY = objetivoY + velocidadFluido.y * 15;
     objetivoConFluidoY -= alturaFluido * 0.5;
 
+    // ------------------------------------------------------------
+    // Social interaction: medusas se atraen/evitan según temperamento
+    // - Siempre hay separación a corta distancia (evita solaparse)
+    // - En rango medio: empáticas tienden a acercarse, agresivas a apartarse
+    // - En choque muy cercano: si es agresiva, hace un "golpe" (splash) leve
+    // ------------------------------------------------------------
+    float humor = temperamento + 0.35 * sin(t * 0.35 + faseHumor);
+    humor = constrain(humor, -1, 1);
+
+    PVector social = new PVector(0, 0);
+
+    // O(n^2) pero n es pequeño (numGusanos)
+    for (Gusano otro : gusanos) {
+      if (otro == this) continue;
+
+      Segmento cOtro = otro.segmentos.get(0);
+      float dx = cOtro.x - cabeza.x;
+      float dy = cOtro.y - cabeza.y;
+      float d = sqrt(dx*dx + dy*dy);
+      if (d < 1e-3) continue;
+
+      // Unit direction toward the other head
+      float ux = dx / d;
+      float uy = dy / d;
+
+      // 1) Strong separation when too close
+      if (d < rangoRepulsion) {
+        float w = (rangoRepulsion - d) / rangoRepulsion;
+        // push away (stronger when closer)
+        social.x -= ux * (w * 1.8);
+        social.y -= uy * (w * 1.8);
+      }
+
+      // 2) Mid-range interaction (depends on mood)
+      if (d >= rangoRepulsion && d < rangoSocial) {
+        float t01 = (d - rangoRepulsion) / max(1.0, (rangoSocial - rangoRepulsion));
+        // Empathy: gentle cohesion; Aggression: gentle repulsion
+        if (humor >= 0) {
+          float coh = (0.55 + 0.45 * (1.0 - t01)) * humor; // a bit stronger when closer
+          social.x += ux * coh;
+          social.y += uy * coh;
+        } else {
+          float rep = (0.35 + 0.65 * (1.0 - t01)) * (-humor);
+          social.x -= ux * rep;
+          social.y -= uy * rep;
+        }
+      }
+
+      // 3) "Choque" cercano: agresivas provocan un pequeño splash direccional
+      if (humor < -0.35 && d < rangoChoque && frameCount % 8 == 0) {
+        // push water away from the other (non-violent, just more energetic)
+        fluido.perturbarDir(cabeza.x, cabeza.y, 26, -dx, -dy, 4.2);
+      }
+    }
+
+    // Limit and scale the social steering
+    float sm = sqrt(social.x*social.x + social.y*social.y);
+    if (sm > 1e-6) {
+      float maxS = 1.65;
+      float k = min(1.0, maxS / sm);
+      social.x *= k;
+      social.y *= k;
+    }
+
+    // Convert steering into a target offset (pixels)
+    float socialPix = 34;
+    objetivoConFluidoX += social.x * socialPix;
+    objetivoConFluidoY += social.y * socialPix;
+
+    // Keep within same margins used elsewhere
+    objetivoConFluidoX = constrain(objetivoConFluidoX, 220, width - 220);
+    objetivoConFluidoY = constrain(objetivoConFluidoY, 240, height - 280);
+
     cabeza.seguir(objetivoConFluidoX, objetivoConFluidoY);
+
+    // --- Fluid drag: nudge the segment motion toward local fluid velocity ---
+    // (Head has the weakest drag; tail will be stronger below)
+    {
+      PVector vF = fluido.obtenerVelocidad(cabeza.x, cabeza.y);
+      float drag = 0.06;
+
+      float mvx = cabeza.x - cabeza.prevX;
+      float mvy = cabeza.y - cabeza.prevY;
+
+      mvx = lerp(mvx, vF.x, drag);
+      mvy = lerp(mvy, vF.y, drag);
+
+      // Tiny momentum loss when pushing the medium
+      float sp = sqrt(mvx*mvx + mvy*mvy);
+      float slow = 1.0 - 0.02 * constrain(sp / 6.0, 0, 1);
+      mvx *= slow;
+      mvy *= slow;
+
+      cabeza.x = cabeza.prevX + mvx;
+      cabeza.y = cabeza.prevY + mvy;
+
+      // --- Continuous wake injection (directional) ---
+      if (sp > 0.15) {
+        float radio = 18;
+        float fuerza = constrain(sp * 1.8, 0, 6.0);
+        fluido.perturbarDir(cabeza.x, cabeza.y, radio, mvx, mvy, fuerza);
+      }
+    }
+
     cabeza.actualizar();
 
     if (random(1) < 0.03) {
       objetivoX += random(-30, 30);
       objetivoY += random(-30, 30);
-      objetivoX = constrain(objetivoX, 150, width-150);
-      objetivoY = constrain(objetivoY, 150, height-150);
+      objetivoX = constrain(objetivoX, 220, width - 220);
+      objetivoY = constrain(objetivoY, 240, height - 280);
     }
 
     for (int i = 1; i < segmentos.size(); i++) {
@@ -67,6 +184,38 @@ class Gusano {
       float targetY = segAnterior.y + velFluidoSeg.y * 10 - alturaFluidoSeg * 0.3;
 
       seg.seguir(targetX, targetY);
+
+      // --- Fluid drag + wake (stronger toward the tail) ---
+      {
+        float tailT = (segmentos.size() <= 1) ? 1.0 : (i / (float)(segmentos.size() - 1));
+
+        PVector vF = fluido.obtenerVelocidad(seg.x, seg.y);
+        float drag = lerp(0.08, 0.22, tailT);
+
+        float mvx = seg.x - seg.prevX;
+        float mvy = seg.y - seg.prevY;
+
+        mvx = lerp(mvx, vF.x, drag);
+        mvy = lerp(mvy, vF.y, drag);
+
+        float sp = sqrt(mvx*mvx + mvy*mvy);
+
+        // Tiny momentum loss when pushing the medium (a bit stronger on tail)
+        float slow = 1.0 - (0.02 + 0.02 * tailT) * constrain(sp / 6.0, 0, 1);
+        mvx *= slow;
+        mvy *= slow;
+
+        seg.x = seg.prevX + mvx;
+        seg.y = seg.prevY + mvy;
+
+        // Directional wake: radius and strength grow slightly toward the tail
+        if (sp > 0.10) {
+          float radio = lerp(14, 30, tailT);
+          float fuerza = constrain(sp * lerp(1.2, 2.2, tailT), 0, 5.5);
+          fluido.perturbarDir(seg.x, seg.y, radio, mvx, mvy, fuerza);
+        }
+      }
+
       seg.actualizar();
     }
   }
@@ -81,8 +230,9 @@ class Gusano {
     objetivoX = cabeza.x + cos(nuevoAngulo) * distancia;
     objetivoY = cabeza.y + sin(nuevoAngulo) * distancia;
 
-    objetivoX = constrain(objetivoX, 100, width-100);
-    objetivoY = constrain(objetivoY, 100, height-100);
+    // Match Segmento margins so the full jellyfish stays visible
+    objetivoX = constrain(objetivoX, 220, width - 220);
+    objetivoY = constrain(objetivoY, 240, height - 280);
   }
 
   void dibujarForma() {
