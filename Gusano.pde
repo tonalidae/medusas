@@ -19,14 +19,20 @@ class Gusano {
   float wanderMul = 1.0;     // how wide/long their wandering arcs are
   float socialMul = 1.0;     // scales social ranges/weights
   float densityMul = 1.0;    // scales rendered point density
+  
+  // --- Depth layer simulation (simulates 3D ocean depth) ---
+  float depthLayer = 0.5;    // 0=deep, 1=surface (affects size/alpha/speed)
+  float depthPhase = 0;      // vertical oscillation phase
+  float depthFreq = 0.008;   // how fast they bob up/down
+  float depthAmp = 0.15;     // amplitude of depth oscillation
 
   // --- Social fields ---
   float humor = 0;
   float temperamento = 0;
   float faseHumor = 0;
   float rangoSocial = 260;
-  float rangoRepulsion = 120;
-  float rangoChoque = 70;
+  float rangoRepulsion = 65;  // reduced from 120 for softer clustering
+  float rangoChoque = 45;     // reduced from 70
 
   // --- User interaction attitude ---
   float userAttitude = 0;         // -1 (fearful) to 1 (curious)
@@ -79,6 +85,13 @@ class Gusano {
   int   constraintIters  = 5;    // constraint relaxation iterations (higher = stiffer)
   float constraintStiff  = 0.85; // 0..1 how strongly we correct per iteration
   float bendSmooth       = 0.12; // 0..1 soft spine smoothing (keeps it organic)
+  
+  // --- Tentacle flow (perpendicular oscillation for natural trailing motion) ---
+  float tentacleWaveFreq = 0.08;   // speed of wave propagation down body
+  float tentacleWaveAmp = 2.5;     // amplitude of lateral wiggle (pixels)
+  float tentaclePhase = 0;         // current wave phase
+  float tentacleLagMul = 1.0;      // how much segments lag behind (drag effect)
+  
   GusanoBehavior behavior;
   GusanoBody body;
   GusanoRender render;
@@ -138,11 +151,41 @@ class Gusano {
     if (id_ == 4) variant = 4;
 
     // Size + behavior diversity (ecosystem feel)
-    shapeScale = random(0.46, 0.70);
+    // Wider size range with occasional juveniles and large adults
+    float sizeRoll = random(1);
+    if (sizeRoll < 0.15) {
+      shapeScale = random(0.25, 0.40); // juvenile
+    } else if (sizeRoll > 0.85) {
+      shapeScale = random(0.75, 0.95); // adult
+    } else {
+      shapeScale = random(0.45, 0.70); // typical
+    }
+    
     speedMul   = random(0.78, 1.28);
     wanderMul  = random(0.75, 1.35);
     socialMul  = random(0.80, 1.35);
     densityMul = random(0.80, 1.15);
+    
+    // Depth layer: creates visual stratification
+    depthLayer = random(1.0);
+    depthPhase = random(TWO_PI);
+    depthFreq = random(0.006, 0.012);
+    depthAmp = random(0.10, 0.20);
+    
+    // Tentacle motion: each jellyfish has unique wiggle pattern
+    tentaclePhase = random(TWO_PI);
+    tentacleWaveFreq = random(0.06, 0.10);
+    
+    // Variants 0-3 need smaller amplitude to maintain jellyfish bell shape
+    // Variant 4 can be more expressive (digital organism)
+    if (variant != 4) {
+      tentacleWaveAmp = random(0.8, 1.5);  // Smaller for cohesive bell
+      constraintStiff = 0.92;  // Stronger constraints
+      longitudSegmento = 10;   // Tighter segments
+    } else {
+      tentacleWaveAmp = random(1.8, 3.5);  // Original expressive motion
+    }
+    tentacleLagMul = random(0.85, 1.15);
 
     // Make the special one a bit smaller and a tad more "nervous"
     if (variant == 4) {

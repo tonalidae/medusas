@@ -7,6 +7,9 @@ class Particula {
   float vx, vy;    // Velocidad
   float ox, oy;    // Posición original (reposo)
 
+  // Brownian motion (thermal noise for organic water behavior)
+  float brownianStrength = 0.035;  // tune 0.01-0.1 for more/less turbulence
+
   // Soft displacement limit (prevents "frozen" regions caused by hard constrain())
     float maxMov = 10;        // max displacement from (ox, oy)
     float limitK = 0.55;      // how much overshoot becomes a corrective velocity impulse
@@ -19,6 +22,11 @@ class Particula {
   }
 
   void actualizar() {
+    // Add Brownian motion (thermal noise)
+    // randomGaussian() gives natural distribution around 0 (more realistic than random())
+    vx += randomGaussian() * brownianStrength;
+    vy += randomGaussian() * brownianStrength;
+    
     x += vx;
     y += vy;
 

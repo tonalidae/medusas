@@ -11,6 +11,16 @@ class GusanoRender {
   void dibujarForma() {
     strokeWeight(1);
 
+    // Simulate vertical depth movement (bobbing)
+    g.depthPhase += g.depthFreq;
+    float depthOsc = sin(g.depthPhase) * g.depthAmp;
+    float depthNow = constrain(g.depthLayer + depthOsc, 0, 1);
+    
+    // Depth affects apparent size and visibility
+    // Deeper (0) = smaller/dimmer, Surface (1) = larger/brighter
+    float depthScale = lerp(0.65, 1.15, depthNow);
+    float depthAlpha = lerp(0.55, 1.0, depthNow);
+
     // Precompute once per draw call
     boolean isFire = (g.variant == 4);
 
@@ -26,7 +36,8 @@ class GusanoRender {
     int puntosMaxBase = int(map(nAct, 1, numSegmentos, 1200, 10000));
 
     // More gusanos => scale density down a bit for performance + ecosystem balance
-    puntosMaxBase = int(puntosMaxBase * pointDensityMul * g.densityMul * (g.shapeScale * g.shapeScale) / (0.60 * 0.60));
+    // Apply depth scale for 3D ocean effect
+    puntosMaxBase = int(puntosMaxBase * pointDensityMul * g.densityMul * depthScale * (g.shapeScale * g.shapeScale) / (0.60 * 0.60));
 
     // Fade-in to prevent initial oversaturation (ADD blend + collapsed geometry)
     float fade = constrain(g.ageFrames / 45.0, 0, 1);
@@ -58,7 +69,8 @@ class GusanoRender {
         cPoint = lerpColor(g.colorCabeza, g.colorCola, verticalProgression);
       }
 
-      stroke(cPoint, 120 * fade * gusanosAlpha);
+      // Apply depth-based alpha for 3D ocean stratification
+      stroke(cPoint, 120 * fade * gusanosAlpha * depthAlpha);
 
       // Map points only onto the currently active body
       int maxIdx = max(0, nAct - 1);

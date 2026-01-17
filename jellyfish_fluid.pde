@@ -529,9 +529,26 @@ void reiniciarGusanos() {
   
   gusanos.clear(); // Clear any existing jellyfish first
   
+  // Natural ocean spawning: create 2-3 loose clusters (current convergences)
+  int numClusters = (int)random(2, 4);
+  ArrayList<PVector> clusterCenters = new ArrayList<PVector>();
+  
+  for (int c = 0; c < numClusters; c++) {
+    float cx = random(boundsInset + 100, width - boundsInset - 100);
+    float cy = random(boundsInset + 100, height - boundsInset - 100);
+    clusterCenters.add(new PVector(cx, cy));
+  }
+  
   for (int i = 0; i < numGusanos; i++) {
-    float x = random(boundsInset, width - boundsInset);
-    float y = random(boundsInset, height - boundsInset);
+    // Pick a cluster (weighted towards first clusters = denser)
+    int clusterIdx = (int)min(pow(random(1), 1.5) * numClusters, numClusters - 1);
+    PVector center = clusterCenters.get(clusterIdx);
+    
+    // Scatter around cluster center (exponential falloff)
+    float radius = randomGaussian() * 120 + 80; // cluster spread
+    float angle = random(TWO_PI);
+    float x = constrain(center.x + cos(angle) * radius, boundsInset, width - boundsInset);
+    float y = constrain(center.y + sin(angle) * radius, boundsInset, height - boundsInset);
 
     // Alternate color palettes
     color head = (i % 2 == 0) ? p1Head : p2Head;

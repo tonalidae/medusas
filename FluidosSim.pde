@@ -47,6 +47,15 @@ class FluidoSim {
 
   // Propagation / diffusion step (cheap, not a full fluid solver)
   void propagarOndas() {
+    // Brownian motion strength at propagation level (micro-turbulence)
+    float brownianProp = 0.015;  // subtle turbulence during wave propagation
+    
+    // Lambertian (isotropic) diffusion: 8-neighbor averaging with distance weighting
+    // Cardinals weighted 1.0, diagonals weighted 1/√2 ≈ 0.707 (inverse distance)
+    float diagWeight = 0.707;
+    float totalWeight = 4.0 + 4.0 * diagWeight; // ≈ 6.828
+    float invWeight = 1.0 / totalWeight;
+    
     // Smooth/propagate BOTH vx and vy so wakes actually move through the medium.
     for (int i = 1; i < f.cols - 1; i++) {
       for (int j = 1; j < f.filas - 1; j++) {
@@ -55,13 +64,39 @@ class FluidoSim {
         float vx = p.vx;
         float vy = p.vy;
 
-        float avx = (f.particulas[i - 1][j].vx + f.particulas[i + 1][j].vx +
-                     f.particulas[i][j - 1].vx + f.particulas[i][j + 1].vx) * 0.25;
-        float avy = (f.particulas[i - 1][j].vy + f.particulas[i + 1][j].vy +
-                     f.particulas[i][j - 1].vy + f.particulas[i][j + 1].vy) * 0.25;
+        // 8-neighbor Lambertian diffusion (isotropic, no grid bias)
+        float avx = (
+          // Cardinals (distance = 1)
+          f.particulas[i - 1][j].vx +     // left
+          f.particulas[i + 1][j].vx +     // right
+          f.particulas[i][j - 1].vx +     // up
+          f.particulas[i][j + 1].vx +     // down
+          // Diagonals (distance = √2, weighted by 1/√2)
+          f.particulas[i - 1][j - 1].vx * diagWeight + // top-left
+          f.particulas[i + 1][j - 1].vx * diagWeight + // top-right
+          f.particulas[i - 1][j + 1].vx * diagWeight + // bottom-left
+          f.particulas[i + 1][j + 1].vx * diagWeight   // bottom-right
+        ) * invWeight;
+        
+        float avy = (
+          // Cardinals (distance = 1)
+          f.particulas[i - 1][j].vy +
+          f.particulas[i + 1][j].vy +
+          f.particulas[i][j - 1].vy +
+          f.particulas[i][j + 1].vy +
+          // Diagonals (distance = √2, weighted by 1/√2)
+          f.particulas[i - 1][j - 1].vy * diagWeight +
+          f.particulas[i + 1][j - 1].vy * diagWeight +
+          f.particulas[i - 1][j + 1].vy * diagWeight +
+          f.particulas[i + 1][j + 1].vy * diagWeight
+        ) * invWeight;
 
         float nvx = vx + (avx - vx) * f.propagacion;
         float nvy = vy + (avy - vy) * f.propagacion;
+        
+        // Add micro-turbulence during propagation (creates organic flow patterns)
+        nvx += randomGaussian() * brownianProp;
+        nvy += randomGaussian() * brownianProp;
 
         // keep the old damping behavior but apply it to both components
         float damp = (1.0 - f.waveDrag);

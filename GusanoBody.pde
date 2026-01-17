@@ -34,11 +34,65 @@ class GusanoBody {
       // Follow previous segment + slight fluid offset
       float targetX = segAnterior.x + velFluidoSeg.x * 10;
       float targetY = segAnterior.y + velFluidoSeg.y * 10 - alturaFluidoSeg * 0.3;
+      
+      // Tail position factor (0 at head → 1 at tail)
+      float tailT = (nAct <= 1) ? 1.0 : (i / (float)(nAct - 1));
+      
+      // --- Natural tentacle motion ---
+      // Variants 0-3: Complex spiral behavior (inspired by parametric animation)
+      // Variant 4: Simple trailing (keeps original digital organism character)
+      if (g.variant != 4) {
+        // Calculate perpendicular direction to movement
+        float mvx = segAnterior.x - segAnterior.prevX;
+        float mvy = segAnterior.y - segAnterior.prevY;
+        float mvMag = sqrt(mvx*mvx + mvy*mvy);
+        
+        if (mvMag > 0.1) {
+          // Perpendicular vector (rotated 90 degrees)
+          float perpX = -mvy / mvMag;
+          float perpY = mvx / mvMag;
+          
+          // Spiral phase: creates rotating wave pattern
+          float spiralPhase = g.tentaclePhase - (i * 0.3 * g.tentacleLagMul);
+          float angleOffset = tailT * PI; // Phase rotation along body
+          
+          // Layered oscillations (inspired by parametric sketch's multiple frequency components)
+          // Similar to: k=5*cos(i/8), e=5*cos(y/9), mag(k,e)/(6+i%5)
+          float wave1 = sin(spiralPhase + angleOffset);
+          float wave2 = sin(spiralPhase * 1.6 + angleOffset * 2.3) * 0.5; // Higher frequency, lower amp
+          float wave3 = cos(spiralPhase * 0.7 + i * 0.2) * 0.3; // Slow rotating component
+          
+          // Radial modulation: amplitude grows and oscillates toward tail
+          float radialMod = (1.0 + sin(tailT * PI * 2.0 + spiralPhase * 0.5) * 0.4);
+          
+          // Combined wave with spiral characteristics
+          float waveOffset = (wave1 + wave2 + wave3) * g.tentacleWaveAmp * radialMod;
+          
+          // CRITICAL: Only apply to tentacles (back 60%), preserve bell shape (front 40%)
+          // This maintains the compact jellyfish bell while letting tentacles flow
+          float tentacleStart = 0.4;  // Bell is front 40%
+          if (tailT > tentacleStart) {
+            float tentacleT = (tailT - tentacleStart) / (1.0 - tentacleStart);
+            waveOffset *= lerp(0.0, 1.0, tentacleT * tentacleT); // Quadratic ramp
+          } else {
+            waveOffset *= 0.0;  // No oscillation in bell region
+          }
+          
+          // Reduced during high arousal (tense = straighter)
+          waveOffset *= (1.0 - g.arousal * 0.4);
+          
+          // Apply perpendicular displacement
+          targetX += perpX * waveOffset;
+          targetY += perpY * waveOffset;
+        }
+      }
 
       seg.seguir(targetX, targetY, velocidad * g.speedMul);
 
       // --- Fluid drag + wake (stronger toward the tail) ---
-      float tailT = (nAct <= 1) ? 1.0 : (i / (float)(nAct - 1));
+      
+      // Progressive lag: tail segments respond more slowly (trailing effect)
+      float lagFactor = lerp(1.0, 0.70, tailT * g.tentacleLagMul);
 
       float drag = lerp(0.08, 0.22, tailT)
                  + 0.10 * (1.0 - pulse)
@@ -50,6 +104,10 @@ class GusanoBody {
 
       mvx = lerp(mvx, velFluidoSeg.x, drag);
       mvy = lerp(mvy, velFluidoSeg.y, drag);
+      
+      // Apply lag factor (tail trails behind)
+      mvx *= lagFactor;
+      mvy *= lagFactor;
 
       float sp = sqrt(mvx*mvx + mvy*mvy);
 
@@ -85,6 +143,9 @@ class GusanoBody {
 
     // Enforce rope-like length constraints so the body can't "stretch" unnaturally
     g.aplicarRestriccionesCuerpo();
+    
+    // Advance tentacle wave phase
+    g.tentaclePhase += g.tentacleWaveFreq;
 
     // Keep inactive segments collapsed to the last active segment (avoids stray drawing)
     Segmento ancla = g.segmentos.get(nAct - 1);
