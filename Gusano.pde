@@ -28,6 +28,10 @@ class Gusano {
   float rangoRepulsion = 120;
   float rangoChoque = 70;
 
+  // --- User interaction attitude ---
+  float userAttitude = 0;         // -1 (fearful) to 1 (curious)
+  float userAttTarget = 0;        // NEW: target attitude pulled by interaction style
+
   // --- Pulse oscillator + arousal (burst/coast + smooth state) ---
   float phase = 0;
   float baseFreq = 0.045;   // radians per frame (will be modulated by arousal)
@@ -37,6 +41,7 @@ class Gusano {
   float arousal = 0;        // 0..1 (fast attack, slow decay)
   float arousalAttack = 0.12;
   float arousalDecay  = 0.982;
+  float arousalFollow = 0.15;   // sensitivity parameter (set by personality)
   float wUser = 0.75;
   float wSocial = 0.55;
 
@@ -46,16 +51,6 @@ class Gusano {
   float modeFollow = 0.10;   // smoothing for mode switching
   float domK = 1.35;         // userDominant if S_user > S_social * domK
   float domSoft = 0.30;      // softness for smooth dominance
-
-
-  // --- User attitude (curious <-> fearful) ---
-  // userAttitude in [-1, +1]
-  //  +1 = curious (approach mouse)
-  //  -1 = fearful (flee mouse)
-  float userAttitude = 0;       // current attitude
-  float userAttTarget = 0;      // slowly drifting target
-  float attFollow = 0.03;       // smoothing toward target
-  float attDrift  = 0.004;      // random walk strength
 
   // --- Main knobs (behavioral) ---
   float userPushBase = 140;     // higher = more reactive to mouse steering
@@ -68,6 +63,16 @@ class Gusano {
   // --- Phase sync (Kuramoto-lite) ---
   float syncStrength = 0.016;   // base coupling per frame (very small)
   float syncMaxStep  = 0.035;   // max radians/frame correction
+  float syncRange = 180;        // range for phase sync (set by personality)
+  
+  // --- Social behavior weights (set by personality) ---
+  float pesoSeparacion = 1.5;
+  float pesoAlineacion = 1.0;
+  float pesoCohesion = 0.6;
+  
+  // --- Body/movement smoothness (set by personality) ---
+  float suavidadCuerpo = 0.25;
+  float suavidadGiro = 0.15;
 
   // --- Body cohesion (prevents unnatural stretching) ---
   float longitudSegmento = 12;   // desired distance between segments (pixels)
@@ -105,6 +110,19 @@ class Gusano {
   float S_userNow = 0.0;
   float S_socialNow = 0.0;
 
+  // Lonely mode transition tracking
+  float rangoSocialOriginal;
+  float wanderMulOriginal;
+  float frecuenciaCambioOriginal;
+  int lonelyTransitionStart = 0;
+  float lonelyBlend = 0.0;
+  
+  // Scare resistance from personality
+  float scareResistance = 0.5;
+  
+  // Social stress tracking
+  float stress = 0.0;
+  
   Gusano(float x, float y, color cHead, color cTail, int id_) {
     segmentos = new ArrayList<Segmento>();
     colorCabeza = cHead;
@@ -422,6 +440,43 @@ class Gusano {
   float smoothstep(float x) {
     x = constrain(x, 0, 1);
     return x * x * (3.0 - 2.0 * x);
+  }
+
+  // Visual feedback helpers
+  color getStateTint() {
+    // Combine arousal, attitude, and stress into visual feedback
+    float r = 255;
+    float g = 255;
+    float b = 255;
+    
+    // Curious (positive attitude) = warmer tint (more yellow/orange)
+    if (userAttitude > 0) {
+      r = 255;
+      g = lerp(255, 200, userAttitude * 0.6);
+      b = lerp(255, 150, userAttitude * 0.8);
+    }
+    // Fearful (negative attitude) = cooler tint (more blue/purple)
+    else if (userAttitude < 0) {
+      r = lerp(255, 180, abs(userAttitude) * 0.7);
+      g = lerp(255, 180, abs(userAttitude) * 0.5);
+      b = 255;
+    }
+    
+    // Stressed = desaturate slightly (more gray)
+    float stressFade = stress * 0.4;
+    r = lerp(r, 200, stressFade);
+    g = lerp(g, 200, stressFade);
+    b = lerp(b, 200, stressFade);
+    
+    return color(r, g, b, 255);
+  }
+  
+  float getGlowIntensity() {
+    // More glow when aroused or curious
+    float baseGlow = 1.0;
+    baseGlow += arousal * 0.4;
+    baseGlow += max(0, userAttitude) * 0.3;
+    return baseGlow;
   }
 }
 

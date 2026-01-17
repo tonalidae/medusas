@@ -2,6 +2,10 @@ class GusanoBehavior {
   Gusano g;
   GusanoBehavior(Gusano g_) { g = g_; }
 
+  // Hysteresis for mode switching - prevents rapid flip-flopping
+  float modeHysteresis = 0.15;  // buffer zone around threshold
+  boolean wasInUserMode = false; // track previous state
+
   void actualizar() {
     // --- Spawn easing: reduce harsh initial motion after spawn/respawn ---
     // 0..1 ramp over first ~60 frames
@@ -62,16 +66,21 @@ class GusanoBehavior {
 
     // ------------------------------------------------------------
     // USER ATTITUDE UPDATE (curious <-> fearful)
+    // NEW: Gradual attitude shifts based on interaction style
     // ------------------------------------------------------------
-    float flipP = g.flipBase + g.flipGain * S_user;
-    if (random(1) < flipP) {
-      g.userAttTarget = -g.userAttTarget;
-      if (abs(g.userAttTarget) < 0.35) g.userAttTarget = (g.userAttTarget >= 0 ? 0.75 : -0.75);
-      g.userAttTarget = constrain(g.userAttTarget + random(-0.15, 0.15), -1, 1);
-    } else {
-      g.userAttTarget = constrain(g.userAttTarget + random(-1, 1) * g.attDrift, -1, 1);
-    }
-    g.userAttitude += (g.userAttTarget - g.userAttitude) * g.attFollow;
+    // Gentle sustained presence → curious
+    // Sudden intense bursts → fearful
+    float gentleScore = userNear * (1.0 - userMove) * 0.5;
+    float intenseScore = userMove * userMove * userNear;
+    
+    float attitudePull = gentleScore - intenseScore * 1.5;
+    g.userAttTarget += attitudePull * 0.015;
+    
+    // Random drift (smaller now that we have intentional pulling)
+    g.userAttTarget = constrain(g.userAttTarget + random(-1, 1) * 0.002, -1, 1);
+    
+    // Smooth follow (replaces instant flips) - slower for gradual transitions
+    g.userAttitude += (g.userAttTarget - g.userAttitude) * 0.018; // was 0.04
     g.userAttitude = constrain(g.userAttitude, -1, 1);
 
     // Social stimulus is computed later
@@ -207,57 +216,66 @@ class GusanoBehavior {
     // SOCIAL FORCES + AROUSAL + MODE SWITCHING + LIFE CYCLE
     // (computes the social steering vector applied to the head)
     // ------------------------------------------------------------
+    
+    // Initialize social force accumulators
     PVector sep = new PVector(0, 0);
     PVector ali = new PVector(0, 0);
     PVector coh = new PVector(0, 0);
-
+    int nSoc = 0;
     int nAli = 0;
     int nCoh = 0;
-    int nSoc = 0;
-
     float stress = 0;
-
+    boolean doCohesion = true;
+    
+    // Cache my velocity
     float myVx = cabeza.x - cabeza.prevX;
     float myVy = cabeza.y - cabeza.prevY;
+    
+    if (g.socialMul > 0.01) {
+      // Get nearby neighbors using spatial grid (O(N) instead of O(N²))
+      ArrayList<Gusano> candidates = spatialGrid.getNeighbors(g, g.rangoSocial);
+      
+      for (Gusano otro : candidates) {
+        if (otro == g) continue;
+        if (otro.segmentos == null || otro.segmentos.size() == 0) continue;
 
-    int cohPeriod = max(6, int(lerp(8, 18, g.userMode)));
-    boolean doCohesion = (frameCount % cohPeriod == (g.id % cohPeriod));
+        Segmento cabezaOtro = otro.segmentos.get(0);
 
-    for (Gusano otro : gusanos) {
-      if (otro == g) continue;
-      Segmento cabezaOtro = otro.segmentos.get(0);
+        float dx = cabezaOtro.x - cabeza.x;
+        float dy = cabezaOtro.y - cabeza.y;
+        float d2 = dx*dx + dy*dy;
+        if (d2 < 1e-6) continue;
+        float d = sqrt(d2);
 
-      float dx = cabezaOtro.x - cabeza.x;
-      float dy = cabezaOtro.y - cabeza.y;
-      float d2 = dx*dx + dy*dy;
-      if (d2 < 1e-6) continue;
-      float d = sqrt(d2);
-
-      if (d < g.rangoRepulsion) {
-        float w = (g.rangoRepulsion - d) / g.rangoRepulsion;
-        sep.x -= (dx / d) * (w * 1.8);
-        sep.y -= (dy / d) * (w * 1.8);
-        stress += w;
-      }
-
-      if (d < g.rangoSocial) {
-        nSoc++;
-        float ovx = cabezaOtro.x - cabezaOtro.prevX;
-        float ovy = cabezaOtro.y - cabezaOtro.prevY;
-        float om = sqrt(ovx*ovx + ovy*ovy);
-        if (om > 1e-6) {
-          ali.x += ovx / om;
-          ali.y += ovy / om;
-          nAli++;
+        if (d < g.rangoRepulsion) {
+          float w = (g.rangoRepulsion - d) / g.rangoRepulsion;
+          sep.x -= (dx / d) * (w * 1.8);
+          sep.y -= (dy / d) * (w * 1.8);
+          stress += w;
         }
 
-        if (doCohesion) {
-          coh.x += cabezaOtro.x;
-          coh.y += cabezaOtro.y;
-          nCoh++;
+        if (d < g.rangoSocial) {
+          nSoc++;
+          float ovx = cabezaOtro.x - cabezaOtro.prevX;
+          float ovy = cabezaOtro.y - cabezaOtro.prevY;
+          float om = sqrt(ovx*ovx + ovy*ovy);
+          if (om > 1e-6) {
+            ali.x += ovx / om;
+            ali.y += ovy / om;
+            nAli++;
+          }
+
+          if (doCohesion) {
+            coh.x += cabezaOtro.x;
+            coh.y += cabezaOtro.y;
+            nCoh++;
+          }
         }
       }
     }
+    
+    // Update stress tracking
+    g.stress = stress;
 
     float crowd = constrain(nSoc / 4.0, 0, 1);
     S_social = constrain(0.55 * constrain(stress, 0, 1) + 0.45 * crowd, 0, 1);
@@ -268,8 +286,18 @@ class GusanoBehavior {
     g.arousal *= g.arousalDecay;
     g.arousal = constrain(g.arousal, 0, 1);
 
-    float dom = (S_user - S_social * g.domK) / max(1e-6, g.domSoft);
-    float userTarget = g.smoothstep(0.5 + 0.5 * constrain(dom, -1, 1));
+    // Mode dominance with hysteresis
+    float dom = (S_user - S_social * g.domK) / g.domSoft;
+
+    // Apply hysteresis: different thresholds depending on current mode
+    float threshold = wasInUserMode ? (0.5 - modeHysteresis) : (0.5 + modeHysteresis);
+    float domValue = 0.5 + 0.5 * constrain(dom, -1, 1);
+    float userTarget = (domValue > threshold) ? 1.0 : 0.0;
+
+    // Update tracking
+    wasInUserMode = (userTarget > 0.5);
+
+    // Smoother follow rate
     g.userMode += (userTarget - g.userMode) * g.modeFollow;
     g.userMode = constrain(g.userMode, 0, 1);
 

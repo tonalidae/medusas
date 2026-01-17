@@ -1,5 +1,3 @@
-
-
 // ============================================================
 // GusanoBody.pde
 // ============================================================
@@ -7,6 +5,9 @@
 class GusanoBody {
   Gusano g;
   GusanoBody(Gusano g_) { g = g_; }
+
+  // Cap fluid wake strength to prevent feedback loops
+  float maxWakeStrength = 3.5;
 
   void actualizar() {
     // Soft wall repulsion (pre-clamp), prevents "cornered = frozen" feel
@@ -70,7 +71,9 @@ class GusanoBody {
             * spawnEase,
           0, 7.0
         );
-        fluido.perturbarDir(seg.x, seg.y, radio, mvx, mvy, fuerza);
+        // Cap wake strength to prevent feedback loops
+        float wakeStrength = constrain(fuerza, 0, maxWakeStrength);
+        fluido.perturbarDir(seg.x, seg.y, radio, mvx, mvy, wakeStrength);
       }
 
       seg.actualizar();
