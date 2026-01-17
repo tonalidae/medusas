@@ -524,8 +524,11 @@ void reiniciarGusanos() {
   lonelyMode = false;
   lastInteractionMs = millis();
   
-  // Calm the water before spawning to prevent agitation
-  fluido.calmarAgua(0.05);
+  // Subtle water calming before spawning (multiple gentle passes)
+  for (int pass = 0; pass < 3; pass++) {
+    fluido.calmarAgua(0.85); // gentle damping per pass
+    fluido.actualizar(); // allow water to settle naturally
+  }
   
   gusanos.clear(); // Clear any existing jellyfish first
   

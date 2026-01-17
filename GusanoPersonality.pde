@@ -44,6 +44,9 @@ class GusanoPersonality {
   
   // Apply this personality to a Gusano
   void applyTo(Gusano g) {
+    // Store personality name for visualization
+    g.personalityName = this.name;
+    
     // Movement parameters
     g.baseFreq = map(swimmingSpeed, 0, 1, 0.035, 0.055);
     g.suavidadGiro = map(agility, 0, 1, 0.08, 0.25);

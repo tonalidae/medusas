@@ -14,7 +14,7 @@ class Fluido {
   float rigidez = 0.035;
   float propagacion = 0.075; // balanced: natural spread with visible wakes
   float waveDrag = 0.075;     // medium damping: ripples persist but don't overwhelm
-  float influenciaVel = 0.18; // reduced: jellyfish gently drift with water, not jerked around
+  float influenciaVel = 0.35; // increased: jellyfish drift more naturally with water currents
 
   float[][] tmpVx;
   float[][] tmpVy;
@@ -111,12 +111,12 @@ class Fluido {
   void calmarAgua(float factor) {
     for (int i = 0; i < cols; i++) {
       for (int j = 0; j < filas; j++) {
-        // Reduce velocity
+        // Gradually reduce velocity (not instant)
         particulas[i][j].vx *= factor;
         particulas[i][j].vy *= factor;
         
-        // Fully reset particles to rest position (removes visual displacement)
-        particulas[i][j].y = particulas[i][j].oy;
+        // Gently ease particles toward rest position (70% interpolation)
+        particulas[i][j].y = lerp(particulas[i][j].y, particulas[i][j].oy, 0.7);
       }
     }
   }

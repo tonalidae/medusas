@@ -32,6 +32,18 @@ class GusanoRender {
     float fade = constrain(g.ageFrames / 45.0, 0, 1);
     fade = fade * fade * (3.0 - 2.0 * fade); // smoothstep
 
+    // Curiosity glow: brighter when curious AND near mouse
+    float curiousGlow = 1.0;
+    if (g.userAttitude > 0.2 && g.segmentos != null && g.segmentos.size() > 0) {
+      Segmento head = g.segmentos.get(0);
+      float dMouse = dist(head.x, head.y, mouseX, mouseY);
+      float proximity = 1.0 - constrain(dMouse / 250.0, 0, 1);
+      proximity = proximity * proximity; // nonlinear
+      
+      // Glow intensity: attitude * proximity * arousal
+      curiousGlow = 1.0 + g.userAttitude * proximity * (1.5 + g.arousal * 0.8);
+    }
+
     int puntosMax = max(80, int(puntosMaxBase * fade));
 
     for (int i = puntosMax; i > 0; i--) {
@@ -58,7 +70,9 @@ class GusanoRender {
         cPoint = lerpColor(g.colorCabeza, g.colorCola, verticalProgression);
       }
 
-      stroke(cPoint, 120 * fade * gusanosAlpha);
+      // Apply curious glow to alpha
+      float glowAlpha = 120 * fade * gusanosAlpha * curiousGlow;
+      stroke(cPoint, glowAlpha);
 
       // Map points only onto the currently active body
       int maxIdx = max(0, nAct - 1);
@@ -111,6 +125,60 @@ class GusanoRender {
     strokeWeight(max(1, 4 * g.shapeScale));
     point(g.segmentos.get(0).x, g.segmentos.get(0).y);
     strokeWeight(1);
+    
+    // Draw personality tag
+    dibujarPersonalityTag();
+  }
+
+  void dibujarPersonalityTag() {
+    if (g.segmentos == null || g.segmentos.size() == 0) return;
+    
+    Segmento head = g.segmentos.get(0);
+    
+    pushStyle();
+    textAlign(CENTER, BOTTOM);
+    textSize(10);
+    
+    // Background box for readability
+    fill(0, 0, 0, 180 * gusanosAlpha);
+    noStroke();
+    
+    String tag = g.personalityName;
+    float textW = textWidth(tag);
+    float boxPadding = 4;
+    float tagY = head.y - 35; // above the head
+    
+    rect(head.x - textW/2 - boxPadding, tagY - 11, 
+         textW + boxPadding*2, 14, 3);
+    
+    // Personality color coding
+    color tagColor = color(200, 200, 200);
+    if (tag.contains("Curious")) {
+      tagColor = color(255, 220, 100); // warm yellow
+    } else if (tag.contains("Shy")) {
+      tagColor = color(150, 180, 255); // soft blue
+    } else if (tag.contains("Bold")) {
+      tagColor = color(255, 120, 80); // bold orange
+    } else if (tag.contains("Nervous")) {
+      tagColor = color(200, 150, 255); // nervous purple
+    } else if (tag.contains("Calm")) {
+      tagColor = color(120, 255, 180); // calm green
+    } else if (tag.contains("Playful")) {
+      tagColor = color(255, 180, 220); // playful pink
+    }
+    
+    // Add attitude indicator
+    String attitudeIcon = "";
+    if (g.userAttitude > 0.3) {
+      attitudeIcon = " ♥"; // curious/friendly
+    } else if (g.userAttitude < -0.3) {
+      attitudeIcon = " ⚠"; // fearful
+    }
+    
+    fill(tagColor, 255 * gusanosAlpha);
+    text(tag + attitudeIcon, head.x, tagY);
+    
+    popStyle();
   }
 
   void dibujarPuntoForma(float x, float y, float cx, float cy) {

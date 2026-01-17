@@ -126,6 +126,9 @@ class Gusano {
   // Spawn tracking for grace period
   int spawnFrame = 0;
   
+  // Personality name for debugging/visualization
+  String personalityName = "Unknown";
+  
   Gusano(float x, float y, color cHead, color cTail, int id_) {
     segmentos = new ArrayList<Segmento>();
     colorCabeza = cHead;
