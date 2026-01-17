@@ -251,5 +251,3 @@ Educational/artistic project. Feel free to learn from, remix, and build upon!
 
 ---
 
-*"The complexity of a system should be in its behavior, not its parameters."*  
-— Inspired by the simplicity of the original prototype
