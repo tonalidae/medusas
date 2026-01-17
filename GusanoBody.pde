@@ -52,21 +52,37 @@ class GusanoBody {
           float perpX = -mvy / mvMag;
           float perpY = mvx / mvMag;
           
-          // Spiral phase: creates rotating wave pattern
-          float spiralPhase = g.tentaclePhase - (i * 0.3 * g.tentacleLagMul);
+          // Phase grouping: creates discrete tentacle behaviors (inspired by i%6 in parametric code)
+          float phaseGroup = i % 5;  // 5 distinct groups
+          
+          // Spiral phase: creates rotating wave pattern with group variation
+          float spiralPhase = g.tentaclePhase - (i * 0.3 * g.tentacleLagMul) + phaseGroup * TWO_PI / 5.0;
           float angleOffset = tailT * PI; // Phase rotation along body
+          
+          // Frequency variation per group (subtle diversity)
+          float freqVariation = 1.0 + (phaseGroup / 20.0);
           
           // Layered oscillations (inspired by parametric sketch's multiple frequency components)
           // Similar to: k=5*cos(i/8), e=5*cos(y/9), mag(k,e)/(6+i%5)
-          float wave1 = sin(spiralPhase + angleOffset);
+          float wave1 = sin(spiralPhase * freqVariation + angleOffset);
           float wave2 = sin(spiralPhase * 1.6 + angleOffset * 2.3) * 0.5; // Higher frequency, lower amp
           float wave3 = cos(spiralPhase * 0.7 + i * 0.2) * 0.3; // Slow rotating component
           
+          // Angular twist: atan2-based spiral (creates DNA-helix effect)
+          float segAngle = atan2(seg.y - segAnterior.y, seg.x - segAnterior.x);
+          float spiralTwist = sin(segAngle * 3.0 + spiralPhase) * 0.25;
+          
+          // Radial distance from head (distance field modulation)
+          float dx = seg.x - g.segmentos.get(0).x;
+          float dy = seg.y - g.segmentos.get(0).y;
+          float distFromHead = sqrt(dx*dx + dy*dy) / 100.0;
+          float radialFreedom = pow(constrain(distFromHead, 0, 1), 0.8);
+          
           // Radial modulation: amplitude grows and oscillates toward tail
-          float radialMod = (1.0 + sin(tailT * PI * 2.0 + spiralPhase * 0.5) * 0.4);
+          float radialMod = (1.0 + sin(tailT * PI * 2.0 + spiralPhase * 0.5) * 0.4) * (0.6 + 0.4 * radialFreedom);
           
           // Combined wave with spiral characteristics
-          float waveOffset = (wave1 + wave2 + wave3) * g.tentacleWaveAmp * radialMod;
+          float waveOffset = (wave1 + wave2 + wave3 + spiralTwist) * g.tentacleWaveAmp * radialMod;
           
           // CRITICAL: Only apply to tentacles (back 60%), preserve bell shape (front 40%)
           // This maintains the compact jellyfish bell while letting tentacles flow

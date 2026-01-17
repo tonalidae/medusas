@@ -2,6 +2,58 @@
 
 // ============================================================
 // GusanoRender.pde
+//
+// RENDERING PIPELINE
+// Converts jellyfish body segments into point clouds using parametric equations
+//
+// ARCHITECTURE:
+// 1. DEPTH SIMULATION: 3D ocean effect via vertical bobbing
+//    - depthPhase: Oscillator for depth animation (sin wave)
+//    - depthNow: Current depth (0=deep, 1=surface)
+//    - Affects: size (depthScale), alpha (depthAlpha)
+//
+// 2. BIOLUMINESCENCE: Dynamic glow based on emotion & personality
+//    - bioGlow = 1.0 + arousal*0.8 + userAttitude*0.6 * personalityGlow
+//    - Higher arousal or curiosity = brighter jellyfish
+//    - ADD blend mode creates luminescent effect
+//
+// 3. POINT CLOUD GENERATION: ~1200-10000 points per jellyfish
+//    - Loop iteration 'i' maps to parametric coords (x_param, y_param)
+//    - Parametric equations produce jellyfish-shaped point distribution
+//    - verticalProgression (0-1) determines which body segment each point attaches to
+//
+// 4. SEGMENT MAPPING: Points follow rope-physics body
+//    - Each point interpolates between adjacent segments
+//    - Creates smooth deformation as jellyfish swims
+//
+// 5. FLUID DISPLACEMENT: Points ride water currents
+//    - Cached fluid velocity per segment (performance)
+//    - Interpolated to each render point
+//    - Creates flowing tentacle effect
+//
+// 6. SHAPE VARIANTS: 6 different parametric equations (cases 0-5)
+//    - Original jellyfish (cases 0-3 from prototype)
+//    - Digital organism (case 4, from processing.org)  
+//    - Spiral jellyfish (case 5, new addition)
+//
+// RENDERING STAGES (per frame):
+//   1. Calculate depth bobbing (sin oscillation)
+//   2. Compute bioluminescent glow multiplier
+//   3. Determine point count (based on life, population, depth)
+//   4. For each point:
+//      a. Map i → parametric coords (x_param, y_param)
+//      b. Compute vertical position in canonical shape
+//      c. Find which body segments it maps to
+//      d. Interpolate position between segments
+//      e. Apply fluid displacement (cached samples)
+//      f. Calculate final position via parametric equations
+//      g. Draw point with appropriate color & alpha
+//   5. Draw pulsing head marker
+//
+// PERFORMANCE NOTES:
+// - Dynamic point density scales with population (fewer points per jellyfish when crowded)
+// - Fade-in prevents spawn bloom (collapsed geometry → full expansion)
+// - Fluid samples cached per-segment, not per-point (40x speedup)
 // ============================================================
 
 class GusanoRender {
@@ -21,14 +73,18 @@ class GusanoRender {
     float depthScale = lerp(0.65, 1.15, depthNow);
     float depthAlpha = lerp(0.55, 1.0, depthNow);
 
+    // ENHANCED: Stronger bioluminescent glow based on arousal and personality
+    float bioGlow = 1.0 + g.arousal * 0.8 + max(0, g.userAttitude) * 0.6;
+    bioGlow *= lerp(0.85, 1.35, g.getGlowIntensity());
+
     // Precompute once per draw call
     boolean isFire = (g.variant == 4);
 
-    // Fire gradient colors (white head -> orange/red tail)
+    // ENHANCED: Brighter fire gradient colors for stronger bioluminescence
     color fireC0 = color(255, 255, 255);
-    color fireC1 = color(255, 230, 120);
-    color fireC2 = color(255, 120, 0);
-    color fireC3 = color(180, 20, 0);
+    color fireC1 = color(255, 245, 180); // brighter mid-tone
+    color fireC2 = color(255, 160, 60);  // more saturated orange
+    color fireC3 = color(220, 60, 20);   // brighter red
 
     // As the jellyfish dies, it loses points (density) and segments (length)
     int nAct = constrain(g.segActivos, 1, numSegmentos);
@@ -69,8 +125,10 @@ class GusanoRender {
         cPoint = lerpColor(g.colorCabeza, g.colorCola, verticalProgression);
       }
 
-      // Apply depth-based alpha for 3D ocean stratification
-      stroke(cPoint, 120 * fade * gusanosAlpha * depthAlpha);
+      // ENHANCED: Apply stronger bioluminescent alpha with bioGlow multiplier
+      float baseAlpha = 120;
+      float enhancedAlpha = baseAlpha * fade * gusanosAlpha * depthAlpha * bioGlow;
+      stroke(cPoint, enhancedAlpha);
 
       // Map points only onto the currently active body
       int maxIdx = max(0, nAct - 1);
@@ -117,10 +175,12 @@ class GusanoRender {
       dibujarPuntoForma(xIn, yIn, x, y);
     }
 
-    // Head fades slightly when low life
+    // ENHANCED: Brighter head glow with pulsing effect
     float life01 = constrain(g.vida / g.vidaMax, 0, 1);
-    stroke(g.colorCabeza, (120 + 100 * life01) * fade);
-    strokeWeight(max(1, 4 * g.shapeScale));
+    float headPulse = 1.0 + sin(g.phase) * 0.3; // pulsing intensity
+    float headAlpha = (140 + 120 * life01) * fade * bioGlow * headPulse;
+    stroke(g.colorCabeza, headAlpha);
+    strokeWeight(max(1, 5 * g.shapeScale)); // slightly larger head marker
     point(g.segmentos.get(0).x, g.segmentos.get(0).y);
     strokeWeight(1);
   }
@@ -190,6 +250,18 @@ class GusanoRender {
         headOffset = 220;
         break;
       }
+
+    case 5:
+      // NEW: Sixth variant - spiral jellyfish
+      k = 3 * cos(x / 18) * sin(y / 22);
+      e = y / 10 - 12;
+      d = (k*k + e*e) / 55.0 + 3.5;
+      float spiral = atan2(e, k) * 2.0;
+      q = - 2.5 * sin(spiral + t * 0.5) + k * (3.5 + 4.5 / d * sin(d * d - t * 2.2));
+      px = q * cos(spiral * 0.3) + 1.0;
+      py = d * 42 + q * sin(spiral * 0.3) * 8;
+      headOffset = 190;
+      break;
 
     default:
       k = 5 * cos(x / 14) * cos(y / 30);

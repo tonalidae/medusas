@@ -21,9 +21,10 @@ ArrayList<Gusano> gusanos;
 Fluido fluido;  // Nuevo sistema de fluido
 SpatialGrid spatialGrid;  // Spatial partitioning for performance
 PersonalityPresets personalityPresets;  // Instance for personality system
+SimulationParams params;  // Centralized configuration
 int numGusanos = 12;
 int numSegmentos = 30;
-float velocidad = 6;
+float velocidad = 3.5;  // Reduced for calmer movement with P2D renderer
 float suavidad = 0.15;
 float pointDensityMul = 1.0;  // scales per-gusano point count to keep perf OK with many gusanos
 
@@ -103,26 +104,48 @@ color p2Tail = color(100, 40, 180);
 color p3Head = color(255, 100, 50);
 color p3Tail = color(150, 20, 10);
 void setup() {
-  size(1280, 800);
+  size(1280, 800, P2D);
+  frameRate(30);  // Cap frame rate to restore original rhythm with P2D renderer
   stroke(0, 66);
   background(bgDark);
   smooth(8);
 
+  // Initialize centralized configuration FIRST
+  params = new SimulationParams();
+  
   fluido = new Fluido(40, 35, 25);  // Reduced from (60, 50, 20) for better performance
   
   // Initialize spatial partitioning grid
-  spatialGrid = new SpatialGrid(0, 0, width, height, 150);
+  spatialGrid = new SpatialGrid(0, 0, width, height, params.spatialCellSize);
   
-  // Initialize personality presets (instance, not static)
+  // Initialize personality presets
   personalityPresets = new PersonalityPresets();
 
-  gusanos = new ArrayList<Gusano>();   // existe la lista, pero VACÍA
+  // Start with empty array - jellyfish spawn after first interaction
+  gusanos = new ArrayList<Gusano>();
   gusanosSpawned = false;
   spawnArmed = false;
   exitArmed = false;
   gusanosAlpha = 0;
 
-  pointDensityMul = constrain(3.5 / max(1.0, (float)numGusanos), 0.25, 0.80);  // Optimized density
+  // Calculate rendering density based on population
+  numGusanos = params.defaultPopulation;
+  pointDensityMul = params.calculatePointDensity(numGusanos);
+  
+  // Print keyboard shortcuts and current config
+  println("\n╔════════════════════════════════════════╗");
+  println("║  JELLYFISH FLUID SIMULATION           ║");
+  println("╚════════════════════════════════════════╝");
+  println("\nKeyboard Controls:");
+  println("  [+/=]   Add jellyfish (max " + params.maxPopulation + ")");
+  println("  [-/_]   Remove jellyfish (min " + params.minPopulation + ")");
+  println("  [SPACE] Full reset (calm water + respawn)");
+  println("  [R]     Randomize all personalities");
+  println("  [D]     Toggle debug info");
+  println("  [P]     Print current parameters");
+  println("\nInitial population: " + numGusanos + " jellyfish");
+  println("Jellyfish will appear after first interaction...");
+  println("\n═══════════════════════════════════════════\n");
 }
 
 
@@ -425,6 +448,50 @@ float getAvgArousal() {
 void keyPressed() {
   if (key == 'd' || key == 'D') {
     showDebug = !showDebug;
+  }
+  
+  // Population controls (from original simple code)
+  else if (key == '+' || key == '=') {
+    numGusanos = min(params.maxPopulation, numGusanos + 1);
+    pointDensityMul = params.calculatePointDensity(numGusanos);
+    reiniciarGusanos();
+    println("Population: " + numGusanos + " jellyfish");
+  }
+  
+  else if (key == '-' || key == '_') {
+    numGusanos = max(params.minPopulation, numGusanos - 1);
+    pointDensityMul = params.calculatePointDensity(numGusanos);
+    reiniciarGusanos();
+    println("Population: " + numGusanos + " jellyfish");
+  }
+  
+  // Full reset (from original simple code)
+  else if (key == ' ') {
+    fluido.calmarAgua(0.1);  // Calm water
+    reiniciarGusanos();
+    scare = 0;
+    scareDrive = 0;
+    intensitySmoothed = 0;
+    scaredExit = false;
+    exitArmed = false;
+    lonelyMode = false;
+    println("RESET: " + numGusanos + " jellyfish spawned, water calmed");
+  }
+  
+  // Randomize personalities
+  else if (key == 'r' || key == 'R') {
+    if (gusanos.size() > 0) {
+      for (Gusano g : gusanos) {
+        GusanoPersonality p = personalityPresets.getRandom(0.3);
+        p.applyTo(g);
+      }
+      println("Randomized personalities for " + gusanos.size() + " jellyfish");
+    }
+  }
+  
+  // Print current parameters
+  else if (key == 'p' || key == 'P') {
+    params.printParams();
   }
 }
 

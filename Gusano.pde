@@ -144,11 +144,9 @@ class Gusano {
     colorCabeza = cHead;
     colorCola = cTail;
     id = id_;
-    // Shape variant distribution:
-    // - Mostly 0..3 (classic shapes)
-    // - Exactly one special "digital organism" (id == 4)
-    variant = (id_ % 4);
-    if (id_ == 4) variant = 4;
+    
+    // CHANGED: Equal distribution across all 6 variants (0-5)
+    variant = int(random(6)); // randomly choose from 0, 1, 2, 3, 4, or 5
 
     // Size + behavior diversity (ecosystem feel)
     // Wider size range with occasional juveniles and large adults

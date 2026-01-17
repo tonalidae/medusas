@@ -1,0 +1,198 @@
+// ============================================================
+// PARAMETRIC SHAPE EQUATIONS REFERENCE
+// ============================================================
+//
+// All 6 jellyfish variants use parametric equations to generate
+// point clouds. Here's how they work:
+//
+// INPUT: Loop index 'i' (0 to puntosMax)
+//   x_param = i % 200        // Horizontal position in parameter space
+//   y_param = i / 43.0       // Vertical position in parameter space
+//
+// PROCESSING: Parametric transformation
+//   k, e, d, q = f(x_param, y_param, t)  // Time-dependent functions
+//   px, py = final position relative to center
+//
+// OUTPUT: World space point
+//   point(px * scale + segment.x, (py - headOffset) * scale + segment.y)
+//
+// ============================================================
+
+// VARIANT 0: Original Jellyfish (smooth, elegant)
+// ──────────────────────────────────────────────────
+k = 5 * cos(x / 14) * cos(y / 30);     // Radial oscillation
+e = y / 8 - 13;                         // Vertical offset
+d = (k² + e²) / 59 + 4;                 // Distance field
+q = -3 * sin(atan2(k,e) * e)            // Angular wave
+    + k * (3 + 4/d * sin(d² - t*2));    // Pulsing modulation
+px = q + 0.9;                           // Horizontal position
+py = d * 45;                            // Vertical stretch
+
+Parameters:
+  - Medium frequency oscillations
+  - Smooth bell shape
+  - Gentle tentacle sway
+  - Best for: Calm, graceful personalities
+
+
+// VARIANT 1: Wavy Jellyfish (more undulating)
+// ──────────────────────────────────────────────────
+k = 6 * cos(x / 12) * cos(y / 25);     // Higher amplitude
+e = y / 7 - 15;                         // Extended body
+d = (k² + e²) / 50 + 3;                 // Wider spread
+q = -2 * sin(atan2(k,e) * e)            // Gentler wave
+    + k * (2 + 5/d * sin(d² - t*1.5));  // Slower pulse
+px = q + 1.2;                           // More offset
+py = d * 40;                            // Shorter body
+
+Differences from Variant 0:
+  + 20% more horizontal amplitude (6 vs 5)
+  + Wider radial spread (k/12 vs k/14)
+  + Extended tentacle length (y/7 vs y/8)
+  - Slower time animation (t*1.5 vs t*2)
+Best for: Dancers, explorers
+
+
+// VARIANT 2: Compact Jellyfish (tighter, denser)
+// ──────────────────────────────────────────────────
+k = 4 * cos(x / 16) * cos(y / 35);     // Lower amplitude
+e = y / 9 - 11;                         // Shorter body
+d = (k² + e²) / 65 + 5;                 // Tighter clustering
+q = -4 * sin(atan2(k,e) * e)            // Stronger wave
+    + k * (4 + 3/d * sin(d² - t*2.5));  // Faster pulse
+px = q + 0.6;                           // Less offset
+py = d * 50;                            // Taller proportions
+
+Differences from Variant 0:
+  - 20% less horizontal amplitude (4 vs 5)
+  - Slower oscillations (k/16 vs k/14)
+  - Shorter tentacles (y/9 vs y/8)
+  + Faster time animation (t*2.5 vs t*2)
+Best for: Shy, nervous, followers
+
+
+// VARIANT 3: Irregular Jellyfish (chaotic, wild)
+// ──────────────────────────────────────────────────
+k = 7 * cos(x / 10) * cos(y / 20);     // Highest amplitude
+e = y / 6 - 17;                         // Very long body
+d = (k² + e²) / 45 + 2;                 // Wide spread
+q = -5 * sin(atan2(k,e) * e)            // Extreme wave
+    + k * (5 + 6/d * sin(d² - t*3));    // Fastest pulse
+px = q + 1.5;                           // Max offset
+py = d * 35;                            // Compressed height
+
+Differences from Variant 0:
+  + 40% more horizontal amplitude (7 vs 5)
+  + Much faster oscillations (k/10 vs k/14)
+  + Very long tentacles (y/6 vs y/8)
+  + Fastest animation (t*3 vs t*2)
+Best for: Bold leaders, playful explorers
+
+
+// VARIANT 4: Digital Organism (computational, alien)
+// ──────────────────────────────────────────────────
+k0 = (4 + sin(y*2 - t) * 3) * cos(x/29);  // Time-modulated amplitude
+e0 = y / 8 - 13;                          // Standard vertical
+d0 = mag(k0, e0);                         // Euclidean distance
+kk = (|k0| < 0.001) ? sign(k0)*0.001 : k0; // Safe reciprocal
+q0 = 3*sin(k0*2) + 0.3/kk                 // Harmonic + singularity
+     + sin(y/25) * k0 * (9 + 4*sin(e0*9 - d0*3 + t*2));
+c0 = d0 - t;                              // Rotating phase
+px = q0 + 30*cos(c0);                     // Circular motion
+py = q0*sin(c0) + d0*39;                  // Spiral expansion
+
+Key Features:
+  - Singularity at k=0 (creates spiky edges)
+  - Circular rotation (cos/sin of c0)
+  - Time-varying amplitude envelope
+  - More "digital" aesthetic
+Best for: Alien, glitch, experimental modes
+
+
+// VARIANT 5: Spiral Jellyfish (NEW - swirling)
+// ──────────────────────────────────────────────────
+k = 3 * cos(x / 18) * sin(y / 22);     // Mixed trig (asymmetry)
+e = y / 10 - 12;                        // Medium length
+d = (k² + e²) / 55 + 3.5;               // Moderate clustering
+spiral = atan2(e, k) * 2.0;             // Twist angle
+q = -2.5*sin(spiral + t*0.5)            // Rotating wave
+    + k * (3.5 + 4.5/d * sin(d² - t*2.2));
+px = q*cos(spiral*0.3) + 1.0;           // Spiral X
+py = d*42 + q*sin(spiral*0.3) * 8;      // Spiral Y + vertical
+
+Key Features:
+  - Asymmetric (cos vs sin)
+  - Spiral parameter affects both q and final position
+  - Creates twisting, DNA-like structure
+Best for: Unique, hypnotic personalities
+
+
+// ============================================================
+// CUSTOMIZATION GUIDE
+// ============================================================
+
+To create a new variant:
+
+1. AMPLITUDE (k coefficient): Controls width
+   - Smaller (3-4) = narrow, shy
+   - Larger (6-7) = wide, bold
+
+2. FREQUENCY (x/N, y/M): Controls oscillation rate
+   - Larger divisors (16, 35) = smooth, slow
+   - Smaller divisors (10, 20) = rippled, fast
+
+3. VERTICAL STRETCH (e coefficient): Controls tentacle length
+   - y/9 or y/10 = short tentacles
+   - y/6 or y/7 = long tentacles
+
+4. TIME SPEED (t multiplier): Controls animation speed
+   - t*1.5 = slow, dreamy
+   - t*3 = fast, agitated
+
+5. DISTANCE FIELD (d formula): Controls bell shape
+   - Larger denominator (65) = tight clustering
+   - Smaller denominator (45) = diffuse spread
+
+6. WAVE FUNCTION (q formula): Controls tentacle motion
+   - sin/cos combinations = smoothness
+   - Higher coefficients = more dramatic waves
+
+
+// ============================================================
+// MAPPING TO BODY SEGMENTS
+// ============================================================
+
+The parametric equations generate points in "canonical space"
+(the idealized jellyfish shape). These points are then:
+
+1. Sorted by vertical position (py) to determine 
+   "verticalProgression" (0=head, 1=tail)
+
+2. Mapped to body segments:
+   segmentIndex = int(verticalProgression * numSegmentos)
+
+3. Interpolated between adjacent segments for smooth deformation
+
+4. Displaced by fluid velocity (creates flowing effect)
+
+This creates the illusion of a 3D jellyfish body made of
+soft, deformable geometry that responds to water currents.
+
+
+// ============================================================
+// PERFORMANCE CONSIDERATIONS
+// ============================================================
+
+Point count per jellyfish: 1200-10000 depending on:
+  - Population (more jellyfish = fewer points each)
+  - Life/health (dying = fewer points)
+  - Depth (deeper = smaller = fewer points)
+
+Optimization: The parametric math runs for EVERY point,
+so avoid expensive operations like:
+  - sqrt() → use squared distances when possible
+  - pow() → use x*x or x*x*x
+  - Division → precompute reciprocals
+
+The current variants are carefully tuned to balance
+visual richness with real-time performance on most systems.

@@ -1,3 +1,49 @@
+// ============================================================
+// GusanoBehaviour.pde
+// 
+// AI & MOVEMENT SYSTEM
+// Handles target selection, pulse swimming, social forces, and user interaction
+// 
+// BEHAVIOR ARCHITECTURE:
+// 1. TARGET WANDERING: Biased random walk with brownian micro-jitter
+//    - objetivoX/Y: Current waypoint in world space
+//    - frecuenciaCambio: How often to pick new targets (personality-driven)
+//    - Brownian jitter: 3% chance per frame of small random nudge (organic unpredictability)
+//
+// 2. PULSE SWIMMING: Jellyfish thrust in pulses, not continuously
+//    - arousal: 0=calm, 1=excited (affects pulse frequency & amplitude)
+//    - phase: Sine wave oscillator for thrust timing
+//    - Inspired by real jellyfish bell contractions
+//
+// 3. USER INTERACTION: Mouse position affects target bias
+//    - userAttitude: -1=scared, 0=neutral, +1=curious
+//    - userMode: Blend between social-dominant (0) and user-dominant (1)
+//    - Hysteresis: Prevents rapid mode switching
+//
+// 4. SOCIAL FORCES: Boid-style flocking (separation, alignment, cohesion)
+//    - Separation: Avoid crowding (personal space)
+//    - Alignment: Match neighbors' direction
+//    - Cohesion: Steer toward group center
+//    - Spatial grid enables O(N) queries instead of O(N²)
+//
+// 5. STRESS & LIFE: Social crowding and user harassment reduce health
+//    - vida: Current health (0 = death/respawn)
+//    - stressSocial: Accumulates when personal space violated
+//    - Dying jellyfish lose segments and shrink
+//
+// EXECUTION FLOW (each frame):
+//   1. Update spawn ease-in (prevents spawn bloom)
+//   2. Check if target reached or timer expired → nuevoObjetivo()
+//   3. Apply brownian jitter to target (if triggered)
+//   4. Sample fluid velocity/height at head (cached for rendering)
+//   5. Apply user interaction bias (toward/away from mouse)
+//   6. Pulse swimming thrust (arousal-modulated)
+//   7. Calculate social forces (spatial grid query)
+//   8. Blend user force vs social force (based on userMode)
+//   9. Move head toward final target
+//   10. Update stress and life
+// ============================================================
+
 class GusanoBehavior {
   Gusano g;
   GusanoBehavior(Gusano g_) { g = g_; }
@@ -99,6 +145,19 @@ class GusanoBehavior {
       g.nuevoObjetivo();
       g.cambioObjetivo = 0;
     }
+    
+    // Brownian micro-jitter: subtle random nudges for organic unpredictability
+    // (inspired by original simple code's target adjustments)
+    // Personality affects jitter intensity: nervous jellyfish wander more
+    float jitterChance = 0.03;  // 3% chance per frame
+    if (random(1) < jitterChance) {
+      // Use wanderMul (0.5-1.8) as proxy for wander intensity
+      float jitterRange = map(g.wanderMul, 0.5, 1.8, 15, 45);
+      g.objetivoX += random(-jitterRange, jitterRange);
+      g.objetivoY += random(-jitterRange, jitterRange);
+      g.objetivoX = constrain(g.objetivoX, boundsInset, width - boundsInset);
+      g.objetivoY = constrain(g.objetivoY, boundsInset, height - boundsInset);
+    }
 
     // ------------------------------------------------------------
     // Head fluid sample (cached)
@@ -141,8 +200,8 @@ class GusanoBehavior {
     // ------------------------------------------------------------
     // Pulse oscillator
     // ------------------------------------------------------------
-    float modeBoost = lerp(0.86, 1.20, g.userMode);
-    float freq = g.baseFreq * lerp(0.85, 1.65, g.arousal) * modeBoost;
+    float modeBoost = lerp(0.90, 1.15, g.userMode);  // Reduced range for steadier rhythm
+    float freq = g.baseFreq * lerp(0.90, 1.40, g.arousal) * modeBoost;  // Less dramatic arousal effect
     g.phase += freq;
     if (g.phase > TWO_PI) g.phase -= TWO_PI;
 
@@ -153,7 +212,7 @@ class GusanoBehavior {
     g.relaxNow = relax;
 
     // Burst push during contraction
-    float burst = pulse * g.pulseAmp * lerp(0.9, 1.45, g.arousal) * lerp(0.95, 1.35, g.userMode) * spawnEase;
+    float burst = pulse * g.pulseAmp * lerp(0.85, 1.25, g.arousal) * lerp(0.95, 1.20, g.userMode) * spawnEase;  // Gentler bursts
     cabeza.x += cos(cabeza.angulo) * burst;
     cabeza.y += sin(cabeza.angulo) * burst;
 
@@ -251,6 +310,7 @@ class GusanoBehavior {
 
         if (d < g.rangoRepulsion) {
           float w = (g.rangoRepulsion - d) / g.rangoRepulsion;
+          w = pow(w, 1.8);  // Steeper falloff (inspired by mag(k,e)**4/5 in parametric code)
           sep.x -= (dx / d) * (w * 1.8);
           sep.y -= (dy / d) * (w * 1.8);
           stress += w;
@@ -361,6 +421,13 @@ class GusanoBehavior {
       coh.y /= nCoh;
       float toCx = coh.x - cabeza.x;
       float toCy = coh.y - cabeza.y;
+      
+      // Add subtle circular orbiting tendency (inspired by parametric code's orbital motion)
+      float orbitPhase = g.phase * 0.5 + g.id * TWO_PI / numGusanos;
+      float orbitRadius = 25 * g.socialMul;
+      toCx += cos(orbitPhase) * orbitRadius * 0.15;  // gentle circular bias
+      toCy += sin(orbitPhase) * orbitRadius * 0.15;
+      
       float cm = sqrt(toCx*toCx + toCy*toCy);
       if (cm > 1e-6) {
         toCx /= cm;
