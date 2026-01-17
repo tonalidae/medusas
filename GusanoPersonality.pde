@@ -45,10 +45,10 @@ class GusanoPersonality {
   // Apply this personality to a Gusano
   void applyTo(Gusano g) {
     // Movement parameters
-    g.baseFreq = map(swimmingSpeed, 0, 1, 0.015, 0.028);  // Slower for natural breathing rhythm
+    g.baseFreq = map(swimmingSpeed, 0, 1, 0.009, 0.017);  // Slower for natural breathing rhythm (40% reduction)
     g.suavidadGiro = map(agility, 0, 1, 0.08, 0.25);
     g.wanderMul = map(wanderIntensity, 0, 1, 0.5, 1.8);
-    g.frecuenciaCambio = map(wanderIntensity, 0, 1, 140, 70);
+    g.frecuenciaCambio = map(wanderIntensity, 0, 1, 210, 105);  // 50% slower target changes
     
     // Social parameters
     g.socialMul = sociability;
@@ -74,7 +74,7 @@ class GusanoPersonality {
     g.wSocial = map(sensitivity, 0, 1, 0.25, 0.55);
     
     // Physical appearance
-    g.pulseAmp = map(pulseStrength, 0, 1, 0.9, 1.5);  // Reduced for gentler pulsing
+    g.pulseAmp = map(pulseStrength, 0, 1, 0.54, 0.90);  // Reduced for much gentler pulsing (40% reduction)
     g.pulseK = map(bodyTension, 0, 1, 3.5, 6.0);  // Higher = sharper contractions, longer pauses
     g.suavidadCuerpo = map(bodyTension, 0, 1, 0.35, 0.15);
   }

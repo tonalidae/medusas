@@ -24,7 +24,7 @@ PersonalityPresets personalityPresets;  // Instance for personality system
 SimulationParams params;  // Centralized configuration
 int numGusanos = 12;
 int numSegmentos = 30;
-float velocidad = 3.5;  // Reduced for calmer movement with P2D renderer
+float velocidad = 2.1;  // 40% slower for much calmer movement
 float suavidad = 0.15;
 float pointDensityMul = 1.0;  // scales per-gusano point count to keep perf OK with many gusanos
 
@@ -96,8 +96,9 @@ color bgDark = color(5, 3, 10);
 color p1Head = color(255, 255, 150);
 color p1Tail = color(20, 100, 50);
 
-color p2Head = color(200, 230, 255);
-color p2Tail = color(100, 40, 180);
+// Enhanced blue/purple palette with more vibrant colors
+color p2Head = color(180, 220, 255);  // Lighter cyan-blue
+color p2Tail = color(140, 60, 220);   // Deeper purple-violet
 
 
 // color new one orange red gradient

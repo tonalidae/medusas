@@ -40,13 +40,13 @@ class Gusano {
 
   // --- Pulse oscillator + arousal (burst/coast + smooth state) ---
   float phase = 0;
-  float baseFreq = 0.045;   // radians per frame (will be modulated by arousal)
+  float baseFreq = 0.027;   // radians per frame (will be modulated by arousal) - 40% slower
   float pulseAmp = 1.6;     // how much extra head travel during contraction
   float pulseK = 2.6;       // higher = snappier contraction
 
   float arousal = 0;        // 0..1 (fast attack, slow decay)
-  float arousalAttack = 0.12;
-  float arousalDecay  = 0.982;
+  float arousalAttack = 0.08;  // Slower arousal buildup (40% reduction)
+  float arousalDecay  = 0.988;  // Faster arousal cooldown (keeps jellyfish calmer)
   float arousalFollow = 0.15;   // sensitivity parameter (set by personality)
   float wUser = 0.75;
   float wSocial = 0.55;
@@ -87,7 +87,7 @@ class Gusano {
   float bendSmooth       = 0.12; // 0..1 soft spine smoothing (keeps it organic)
   
   // --- Tentacle flow (perpendicular oscillation for natural trailing motion) ---
-  float tentacleWaveFreq = 0.08;   // speed of wave propagation down body
+  float tentacleWaveFreq = 0.048;   // speed of wave propagation down body (40% slower)
   float tentacleWaveAmp = 2.5;     // amplitude of lateral wiggle (pixels)
   float tentaclePhase = 0;         // current wave phase
   float tentacleLagMul = 1.0;      // how much segments lag behind (drag effect)
@@ -159,7 +159,7 @@ class Gusano {
       shapeScale = random(0.45, 0.70); // typical
     }
     
-    speedMul   = random(0.78, 1.28);
+    speedMul   = random(0.47, 0.77);  // 40% slower individual speed variation
     wanderMul  = random(0.75, 1.35);
     socialMul  = random(0.80, 1.35);
     densityMul = random(0.80, 1.15);
@@ -167,12 +167,12 @@ class Gusano {
     // Depth layer: creates visual stratification
     depthLayer = random(1.0);
     depthPhase = random(TWO_PI);
-    depthFreq = random(0.006, 0.012);
+    depthFreq = random(0.0036, 0.0072);  // 40% slower vertical bobbing
     depthAmp = random(0.10, 0.20);
     
     // Tentacle motion: each jellyfish has unique wiggle pattern
     tentaclePhase = random(TWO_PI);
-    tentacleWaveFreq = random(0.06, 0.10);
+    tentacleWaveFreq = random(0.036, 0.060);  // 40% slower tentacle wave propagation
     
     // Variants 0-3 need smaller amplitude to maintain jellyfish bell shape
     // Variant 4 can be more expressive (digital organism)
@@ -216,7 +216,7 @@ class Gusano {
     objetivoX = random(boundsInset, width - boundsInset);
     objetivoY = random(boundsInset, height - boundsInset);
     cambioObjetivo = 0;
-    frecuenciaCambio = random(80, 120);
+    frecuenciaCambio = random(120, 180);  // 50% slower target changes
 
     // Random personality per jellyfish
     temperamento = random(-1, 1);

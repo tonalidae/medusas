@@ -14,7 +14,7 @@ class Fluido {
   float rigidez = 0.035;
   float propagacion = 0.075; // balanced: natural spread with visible wakes
   float waveDrag = 0.075;     // medium damping: ripples persist but don't overwhelm
-  float influenciaVel = 0.18; // reduced: jellyfish gently drift with water, not jerked around
+  float influenciaVel = 0.12; // reduced further: jellyfish swim more autonomously, less influenced by currents
 
   float[][] tmpVx;
   float[][] tmpVy;

@@ -32,8 +32,8 @@ class GusanoBody {
       g.cacheH[i]  = alturaFluidoSeg;
 
       // Follow previous segment + slight fluid offset
-      float targetX = segAnterior.x + velFluidoSeg.x * 10;
-      float targetY = segAnterior.y + velFluidoSeg.y * 10 - alturaFluidoSeg * 0.3;
+      float targetX = segAnterior.x + velFluidoSeg.x * 6;
+      float targetY = segAnterior.y + velFluidoSeg.y * 6 - alturaFluidoSeg * 0.2;
       
       // Tail position factor (0 at head → 1 at tail)
       float tailT = (nAct <= 1) ? 1.0 : (i / (float)(nAct - 1));
@@ -110,10 +110,10 @@ class GusanoBody {
       // Progressive lag: tail segments respond more slowly (trailing effect)
       float lagFactor = lerp(1.0, 0.70, tailT * g.tentacleLagMul);
 
-      float drag = lerp(0.08, 0.22, tailT)
+      float drag = lerp(0.05, 0.18, tailT)
                  + 0.10 * (1.0 - pulse)
                  + 0.04 * (1.0 - g.arousal)
-                 - 0.02 * g.userMode;
+                 - 0.04 * g.userMode;
 
       float mvx = seg.x - seg.prevX;
       float mvy = seg.y - seg.prevY;

@@ -168,9 +168,9 @@ class GusanoBehavior {
     g.cacheVy[0] = velocidadFluido.y;
     g.cacheH[0]  = alturaFluido;
 
-    float objetivoConFluidoX = g.objetivoX + velocidadFluido.x * 15;
-    float objetivoConFluidoY = g.objetivoY + velocidadFluido.y * 15;
-    objetivoConFluidoY -= alturaFluido * 0.5;
+    float objetivoConFluidoX = g.objetivoX + velocidadFluido.x * 8;
+    float objetivoConFluidoY = g.objetivoY + velocidadFluido.y * 8;
+    objetivoConFluidoY -= alturaFluido * 0.3;
 
     // ------------------------------------------------------------
     // User-target bias: mouse steers the *target* toward/away
@@ -238,7 +238,7 @@ class GusanoBehavior {
     // ------------------------------------------------------------
     {
       PVector vF = velocidadFluido;
-      float drag = 0.05 + 0.12 * (1.0 - pulse) + 0.05 * (1.0 - g.arousal) - 0.03 * g.userMode;
+      float drag = 0.03 + 0.12 * (1.0 - pulse) + 0.05 * (1.0 - g.arousal) - 0.05 * g.userMode;
 
       float mvx = cabeza.x - cabeza.prevX;
       float mvy = cabeza.y - cabeza.prevY;

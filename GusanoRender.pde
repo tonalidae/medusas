@@ -191,39 +191,39 @@ class GusanoRender {
 
     switch(g.variant) {
     case 0:
-      k = 5 * cos(x / 14) * cos(y / 30);
+      k = 3.5 * cos(x / 14) * cos(y / 30);  // Reduced amplitude for narrower shape
       e = y / 8 - 13;
       d = (k*k + e*e) / 59.0 + 4.0;
-      q = - 3 * sin(atan2(k, e) * e) + k * (3 + 4 / d * sin(d * d - t * 2));
-      px = q + 0.9;
-      py = d * 45;
+      q = - 1.5 * sin(atan2(k, e) * e) + k * (3 + 4 / d * sin(d * d - t * 2));  // Less horizontal sway
+      px = q + 0.6;  // Reduced horizontal offset
+      py = d * 52;  // Increased vertical stretch
       break;
 
     case 1:
-      k = 6 * cos(x / 12) * cos(y / 25);
+      k = 4.2 * cos(x / 12) * cos(y / 25);  // Reduced amplitude
       e = y / 7 - 15;
       d = (k*k + e*e) / 50.0 + 3.0;
-      q = - 2 * sin(atan2(k, e) * e) + k * (2 + 5 / d * sin(d * d - t * 1.5));
-      px = q + 1.2;
-      py = d * 40;
+      q = - 1.2 * sin(atan2(k, e) * e) + k * (2 + 5 / d * sin(d * d - t * 1.5));  // Less horizontal sway
+      px = q + 0.8;  // Reduced horizontal offset
+      py = d * 48;  // Increased vertical stretch
       break;
 
     case 2:
-      k = 4 * cos(x / 16) * cos(y / 35);
+      k = 3.0 * cos(x / 16) * cos(y / 35);  // Reduced amplitude for compact shape
       e = y / 9 - 11;
       d = (k*k + e*e) / 65.0 + 5.0;
-      q = - 4 * sin(atan2(k, e) * e) + k * (4 + 3 / d * sin(d * d - t * 2.5));
-      px = q + 0.6;
-      py = d * 50;
+      q = - 2.0 * sin(atan2(k, e) * e) + k * (4 + 3 / d * sin(d * d - t * 2.5));  // Less horizontal sway
+      px = q + 0.4;  // Reduced horizontal offset
+      py = d * 56;  // Increased vertical stretch
       break;
 
     case 3:
-      k = 7 * cos(x / 10) * cos(y / 20);
+      k = 5.0 * cos(x / 10) * cos(y / 20);  // Reduced amplitude from very wide spread
       e = y / 6 - 17;
       d = (k*k + e*e) / 45.0 + 2.0;
-      q = - 5 * sin(atan2(k, e) * e) + k * (5 + 6 / d * sin(d * d - t * 3));
-      px = q + 1.5;
-      py = d * 35;
+      q = - 2.5 * sin(atan2(k, e) * e) + k * (5 + 6 / d * sin(d * d - t * 3));  // Less horizontal sway
+      px = q + 1.0;  // Reduced horizontal offset
+      py = d * 44;  // Increased vertical stretch
       break;
 
     case 4:
