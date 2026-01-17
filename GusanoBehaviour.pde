@@ -1,0 +1,391 @@
+class GusanoBehavior {
+  Gusano g;
+  GusanoBehavior(Gusano g_) { g = g_; }
+
+  void actualizar() {
+    // --- Spawn easing: reduce harsh initial motion after spawn/respawn ---
+    // 0..1 ramp over first ~60 frames
+    float spawnEase = constrain(g.ageFrames / 60.0, 0, 1);
+    spawnEase = spawnEase * spawnEase * (3.0 - 2.0 * spawnEase); // smoothstep
+    g.spawnEaseNow = spawnEase;
+
+    g.cambioObjetivo++;
+    Segmento cabeza = g.segmentos.get(0);
+
+    // ------------------------------------------------------------
+    // Exit steer (global)
+    // ------------------------------------------------------------
+    if (exitArmed) {
+      float dL = cabeza.x;
+      float dR = width - cabeza.x;
+      float dT = cabeza.y;
+      float dB = height - cabeza.y;
+
+      if (dL < dR && dL < dT && dL < dB) {
+        g.objetivoX = -300;
+        g.objetivoY = cabeza.y;
+      } else if (dR < dT && dR < dB) {
+        g.objetivoX = width + 300;
+        g.objetivoY = cabeza.y;
+      } else if (dT < dB) {
+        g.objetivoX = cabeza.x;
+        g.objetivoY = -300;
+      } else {
+        g.objetivoX = cabeza.x;
+        g.objetivoY = height + 300;
+      }
+
+      // Small push in the goal direction
+      float dx = g.objetivoX - cabeza.x;
+      float dy = g.objetivoY - cabeza.y;
+      float m = sqrt(dx*dx + dy*dy);
+      if (m > 1e-6) {
+        dx /= m;
+        dy /= m;
+        cabeza.x += dx * 1.2;
+        cabeza.y += dy * 1.2;
+      }
+    }
+
+    // ------------------------------------------------------------
+    // USER STIMULUS
+    // ------------------------------------------------------------
+    float mouseV = dist(mouseX, mouseY, pmouseX, pmouseY);
+    float dMouse = dist(cabeza.x, cabeza.y, mouseX, mouseY);
+    float userNear = 1.0 - constrain(dMouse / 200.0, 0, 1);
+    userNear = g.smoothstep(userNear);
+
+    float userMove = constrain(mouseV / 30.0, 0, 1);
+    float S_user = userNear * userMove;
+    if (mousePressed) S_user = max(S_user, userNear * 0.85);
+    g.S_userNow = S_user;
+
+    // ------------------------------------------------------------
+    // USER ATTITUDE UPDATE (curious <-> fearful)
+    // ------------------------------------------------------------
+    float flipP = g.flipBase + g.flipGain * S_user;
+    if (random(1) < flipP) {
+      g.userAttTarget = -g.userAttTarget;
+      if (abs(g.userAttTarget) < 0.35) g.userAttTarget = (g.userAttTarget >= 0 ? 0.75 : -0.75);
+      g.userAttTarget = constrain(g.userAttTarget + random(-0.15, 0.15), -1, 1);
+    } else {
+      g.userAttTarget = constrain(g.userAttTarget + random(-1, 1) * g.attDrift, -1, 1);
+    }
+    g.userAttitude += (g.userAttTarget - g.userAttitude) * g.attFollow;
+    g.userAttitude = constrain(g.userAttitude, -1, 1);
+
+    // Social stimulus is computed later
+    float S_social = 0;
+
+    // ------------------------------------------------------------
+    // Target switching modulation
+    // ------------------------------------------------------------
+    float distanciaAlObjetivo = dist(cabeza.x, cabeza.y, g.objetivoX, g.objetivoY);
+
+    float calm = (1.0 - g.arousal) * (1.0 - 0.7 * g.userMode);
+    g.frecuenciaCambio = lerp(90, 160, calm);
+    g.frecuenciaCambio = lerp(220, g.frecuenciaCambio, spawnEase);
+
+    if (g.cambioObjetivo > g.frecuenciaCambio || distanciaAlObjetivo < 20) {
+      g.nuevoObjetivo();
+      g.cambioObjetivo = 0;
+    }
+
+    // ------------------------------------------------------------
+    // Head fluid sample (cached)
+    // ------------------------------------------------------------
+    PVector velocidadFluido = fluido.obtenerVelocidad(cabeza.x, cabeza.y);
+    float alturaFluido = fluido.obtenerAltura(cabeza.x, cabeza.y);
+    g.cacheVx[0] = velocidadFluido.x;
+    g.cacheVy[0] = velocidadFluido.y;
+    g.cacheH[0]  = alturaFluido;
+
+    float objetivoConFluidoX = g.objetivoX + velocidadFluido.x * 15;
+    float objetivoConFluidoY = g.objetivoY + velocidadFluido.y * 15;
+    objetivoConFluidoY -= alturaFluido * 0.5;
+
+    // ------------------------------------------------------------
+    // User-target bias: mouse steers the *target* toward/away
+    // ------------------------------------------------------------
+    float att = g.userAttitude;
+    float attMag = abs(att);
+    float attSign = (att >= 0) ? 1.0 : -1.0;
+
+    float md = max(1e-6, dMouse);
+    float dmX = (mouseX - cabeza.x) / md;
+    float dmY = (mouseY - cabeza.y) / md;
+
+    float steerGate = userNear;
+    float steerA = 0.35 + 0.65 * g.arousal;
+    float steerM = 0.45 + 0.55 * g.userMode;
+
+    float userPush = g.userPushBase * attMag * steerGate * steerA * steerM * spawnEase;
+
+    objetivoConFluidoX += dmX * userPush * attSign;
+    objetivoConFluidoY += dmY * userPush * attSign;
+
+    // Ease the effective target during first frames
+    float tgtX = lerp(cabeza.x, objetivoConFluidoX, spawnEase);
+    float tgtY = lerp(cabeza.y, objetivoConFluidoY, spawnEase);
+    cabeza.seguir(tgtX, tgtY + velocidad * g.speedMul);
+
+    // ------------------------------------------------------------
+    // Pulse oscillator
+    // ------------------------------------------------------------
+    float modeBoost = lerp(0.86, 1.20, g.userMode);
+    float freq = g.baseFreq * lerp(0.85, 1.65, g.arousal) * modeBoost;
+    g.phase += freq;
+    if (g.phase > TWO_PI) g.phase -= TWO_PI;
+
+    float raw = max(0, sin(g.phase));
+    float pulse = pow(raw, g.pulseK);
+    float relax = 1.0 - pulse;
+    g.pulseNow = pulse;
+    g.relaxNow = relax;
+
+    // Burst push during contraction
+    float burst = pulse * g.pulseAmp * lerp(0.9, 1.45, g.arousal) * lerp(0.95, 1.35, g.userMode) * spawnEase;
+    cabeza.x += cos(cabeza.angulo) * burst;
+    cabeza.y += sin(cabeza.angulo) * burst;
+
+    // Tiny flee kick (fearful + high user stimulus)
+    if (g.userAttitude < -0.15) {
+      float danger = constrain(0.5 * (S_user + g.userMode), 0, 1);
+      if (danger > 0.55) {
+        float awayX = (cabeza.x - mouseX);
+        float awayY = (cabeza.y - mouseY);
+        float am = sqrt(awayX*awayX + awayY*awayY);
+        if (am > 1e-6) {
+          awayX /= am;
+          awayY /= am;
+          float kick = g.fleeKick * danger * (-g.userAttitude) * (0.35 + 0.65 * g.arousal) * spawnEase;
+          cabeza.x += awayX * kick;
+          cabeza.y += awayY * kick;
+        }
+      }
+    }
+
+    // ------------------------------------------------------------
+    // Head fluid drag + wake injection
+    // ------------------------------------------------------------
+    {
+      PVector vF = velocidadFluido;
+      float drag = 0.05 + 0.12 * (1.0 - pulse) + 0.05 * (1.0 - g.arousal) - 0.03 * g.userMode;
+
+      float mvx = cabeza.x - cabeza.prevX;
+      float mvy = cabeza.y - cabeza.prevY;
+
+      mvx = lerp(mvx, vF.x, drag);
+      mvy = lerp(mvy, vF.y, drag);
+
+      float sp = sqrt(mvx*mvx + mvy*mvy);
+      float slow = 1.0 - 0.02 * constrain(sp / 6.0, 0, 1);
+      mvx *= slow;
+      mvy *= slow;
+
+      cabeza.x = cabeza.prevX + mvx;
+      cabeza.y = cabeza.prevY + mvy;
+
+      if (sp > 0.15) {
+        float radio = 18;
+        float fuerza = constrain(sp * 1.8 * (1.0 + 0.8 * pulse + 0.6 * g.arousal) * lerp(1.0, 1.30, g.userMode) * spawnEase, 0, 7.2);
+        fluido.perturbarDir(cabeza.x, cabeza.y, radio, mvx, mvy, fuerza);
+      }
+    }
+
+    cabeza.actualizar();
+
+    // Small wander drift
+    if (random(1) < 0.03) {
+      g.objetivoX += random(-30, 30);
+      g.objetivoY += random(-30, 30);
+      g.objetivoX = constrain(g.objetivoX, boundsInset, width - boundsInset);
+      g.objetivoY = constrain(g.objetivoY, boundsInset, height - boundsInset);
+    }
+
+    // ------------------------------------------------------------
+    // SOCIAL FORCES + AROUSAL + MODE SWITCHING + LIFE CYCLE
+    // (computes the social steering vector applied to the head)
+    // ------------------------------------------------------------
+    PVector sep = new PVector(0, 0);
+    PVector ali = new PVector(0, 0);
+    PVector coh = new PVector(0, 0);
+
+    int nAli = 0;
+    int nCoh = 0;
+    int nSoc = 0;
+
+    float stress = 0;
+
+    float myVx = cabeza.x - cabeza.prevX;
+    float myVy = cabeza.y - cabeza.prevY;
+
+    int cohPeriod = max(6, int(lerp(8, 18, g.userMode)));
+    boolean doCohesion = (frameCount % cohPeriod == (g.id % cohPeriod));
+
+    for (Gusano otro : gusanos) {
+      if (otro == g) continue;
+      Segmento cabezaOtro = otro.segmentos.get(0);
+
+      float dx = cabezaOtro.x - cabeza.x;
+      float dy = cabezaOtro.y - cabeza.y;
+      float d2 = dx*dx + dy*dy;
+      if (d2 < 1e-6) continue;
+      float d = sqrt(d2);
+
+      if (d < g.rangoRepulsion) {
+        float w = (g.rangoRepulsion - d) / g.rangoRepulsion;
+        sep.x -= (dx / d) * (w * 1.8);
+        sep.y -= (dy / d) * (w * 1.8);
+        stress += w;
+      }
+
+      if (d < g.rangoSocial) {
+        nSoc++;
+        float ovx = cabezaOtro.x - cabezaOtro.prevX;
+        float ovy = cabezaOtro.y - cabezaOtro.prevY;
+        float om = sqrt(ovx*ovx + ovy*ovy);
+        if (om > 1e-6) {
+          ali.x += ovx / om;
+          ali.y += ovy / om;
+          nAli++;
+        }
+
+        if (doCohesion) {
+          coh.x += cabezaOtro.x;
+          coh.y += cabezaOtro.y;
+          nCoh++;
+        }
+      }
+    }
+
+    float crowd = constrain(nSoc / 4.0, 0, 1);
+    S_social = constrain(0.55 * constrain(stress, 0, 1) + 0.45 * crowd, 0, 1);
+    g.S_socialNow = S_social;
+
+    float targetArousal = constrain(S_user * g.wUser + S_social * g.wSocial, 0, 1);
+    g.arousal += (targetArousal - g.arousal) * g.arousalAttack;
+    g.arousal *= g.arousalDecay;
+    g.arousal = constrain(g.arousal, 0, 1);
+
+    float dom = (S_user - S_social * g.domK) / max(1e-6, g.domSoft);
+    float userTarget = g.smoothstep(0.5 + 0.5 * constrain(dom, -1, 1));
+    g.userMode += (userTarget - g.userMode) * g.modeFollow;
+    g.userMode = constrain(g.userMode, 0, 1);
+
+    // Phase sync (only meaningful when social-dominant)
+    float syncGate = (1.0 - g.userMode) * S_social;
+    if (syncGate > 1e-4) {
+      float sumC = 0;
+      float sumS = 0;
+      int nPh = 0;
+
+      for (Gusano otro : gusanos) {
+        if (otro == g) continue;
+        Segmento h2 = otro.segmentos.get(0);
+        float dd = dist(cabeza.x, cabeza.y, h2.x, h2.y);
+        if (dd < g.rangoSocial) {
+          float w = 1.0 - (dd / g.rangoSocial);
+          w = w * w;
+          sumC += cos(otro.phase) * w;
+          sumS += sin(otro.phase) * w;
+          nPh++;
+        }
+      }
+
+      if (nPh > 0 && (sumC*sumC + sumS*sumS) > 1e-8) {
+        float mean = atan2(sumS, sumC);
+        float dphi = atan2(sin(mean - g.phase), cos(mean - g.phase));
+
+        float k = g.syncStrength * syncGate;
+        float step = constrain(dphi * k, -g.syncMaxStep, g.syncMaxStep);
+        g.phase += step;
+
+        if (g.phase < 0) g.phase += TWO_PI;
+        else if (g.phase >= TWO_PI) g.phase -= TWO_PI;
+      }
+    }
+
+    PVector social = new PVector(0, 0);
+
+    float wSep = 1.35 * lerp(1.18, 0.92, relax) * lerp(1.00, 1.18, g.userMode);
+    float wAli = 0.55 * lerp(0.85, 1.35, relax) * lerp(1.25, 0.62, g.userMode);
+    float wCoh = 0.30 * lerp(0.80, 1.75, relax) * lerp(1.40, 0.55, g.userMode);
+
+    social.add(sep.x * wSep, sep.y * wSep);
+
+    if (nAli > 0) {
+      ali.x /= nAli;
+      ali.y /= nAli;
+
+      float myM = sqrt(myVx*myVx + myVy*myVy);
+      float myHx = (myM > 1e-6) ? (myVx / myM) : 0;
+      float myHy = (myM > 1e-6) ? (myVy / myM) : 0;
+
+      social.x += (ali.x - myHx) * wAli;
+      social.y += (ali.y - myHy) * wAli;
+    }
+
+    if (doCohesion && nCoh > 0) {
+      coh.x /= nCoh;
+      coh.y /= nCoh;
+      float toCx = coh.x - cabeza.x;
+      float toCy = coh.y - cabeza.y;
+      float cm = sqrt(toCx*toCx + toCy*toCy);
+      if (cm > 1e-6) {
+        toCx /= cm;
+        toCy /= cm;
+        social.x += toCx * wCoh;
+        social.y += toCy * wCoh;
+      }
+    }
+
+    float sMag = sqrt(social.x*social.x + social.y*social.y);
+    if (sMag > 1e-6) {
+      float maxSocial = 1.2 + 0.4 * g.temperamento;
+      if (sMag > maxSocial) {
+        social.x = (social.x / sMag) * maxSocial;
+        social.y = (social.y / sMag) * maxSocial;
+      }
+    }
+
+    // Life drain
+    g.vida -= 0.015;
+    float gasto = (0.06 + 0.06 * max(0, -g.humor));
+    g.vida -= stress * gasto;
+    g.vida = constrain(g.vida, 0, g.vidaMax);
+
+    if (g.estado == 0 && g.vida <= 0.001) {
+      g.estado = 1;
+      g.tickCambioCuerpo = 0;
+    }
+
+    if (g.estado == 1) {
+      g.tickCambioCuerpo++;
+      if (g.tickCambioCuerpo % 6 == 0) {
+        g.segActivos = max(1, g.segActivos - 1);
+      }
+      if (g.segActivos <= 1) {
+        g.renacer();
+        g.estado = 2;
+        g.tickCambioCuerpo = 0;
+      }
+    }
+
+    if (g.estado == 2) {
+      g.tickCambioCuerpo++;
+      g.vida = min(g.vidaMax, g.vida + 0.22);
+      if (g.tickCambioCuerpo % 5 == 0) {
+        g.segActivos = min(numSegmentos, g.segActivos + 1);
+      }
+      if (g.segActivos >= numSegmentos && g.vida >= g.vidaMax * 0.98) {
+        g.estado = 0;
+        g.vida = g.vidaMax;
+      }
+    }
+
+    // Apply social steering to the head (BODY will handle wall repulsion + segment updates)
+    cabeza.x += social.x;
+    cabeza.y += social.y;
+  }
+}
