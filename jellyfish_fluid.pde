@@ -10,10 +10,11 @@ import java.util.HashSet;
 
 ArrayList<Gusano> gusanos;
 Fluido fluido;  // Nuevo sistema de fluido
-int numGusanos = 5;
+int numGusanos = 12;
 int numSegmentos = 30;
 float velocidad = 6;
 float suavidad = 0.15;
+float pointDensityMul = 1.0;  // scales per-gusano point count to keep perf OK with many gusanos
 
 
 // --- Gusanos delayed spawn + exit/fade control ---
@@ -82,6 +83,8 @@ void setup() {
   spawnArmed = false;
   exitArmed = false;
   gusanosAlpha = 0;
+
+  pointDensityMul = constrain(5.0 / max(1.0, (float)numGusanos), 0.40, 1.00);
 }
 
 

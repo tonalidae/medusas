@@ -11,6 +11,14 @@ class Gusano {
   float cambioObjetivo;
   float frecuenciaCambio;
   int id;
+    // Variant/type (shape) separate from unique id
+  int variant = 0;           // 0..4
+
+  // Per-gusano variation knobs (ecosystem diversity)
+  float speedMul = 1.0;      // movement speed multiplier
+  float wanderMul = 1.0;     // how wide/long their wandering arcs are
+  float socialMul = 1.0;     // scales social ranges/weights
+  float densityMul = 1.0;    // scales rendered point density
 
   // --- Social fields ---
   float humor = 0;
@@ -69,7 +77,7 @@ class Gusano {
 
   // --- Render scale (size) ---
   // Scale the whole gusano shape. 0.6 = 40% smaller.
-  float shapeScale = 0.60;
+  float shapeScale = 0.50;
 
   // --- Life cycle (morir / renacer / crecer) ---
   // estado: 0 = viva, 1 = muriendo (pierde puntos/cuerpo), 2 = creciendo (renace)
@@ -93,6 +101,40 @@ class Gusano {
     colorCabeza = cHead;
     colorCola = cTail;
     id = id_;
+        // Shape variant distribution:
+    // - Mostly 0..3 (classic shapes)
+    // - Exactly one special "digital organism" (id == 4)
+    variant = (id_ % 4);
+    if (id_ == 4) variant = 4;
+
+    // Size + behavior diversity (ecosystem feel)
+    shapeScale = random(0.46, 0.70);
+    speedMul   = random(0.78, 1.28);
+    wanderMul  = random(0.75, 1.35);
+    socialMul  = random(0.80, 1.35);
+    densityMul = random(0.80, 1.15);
+
+    // Make the special one a bit smaller and a tad more "nervous"
+    if (variant == 4) {
+      shapeScale = random(0.44, 0.60);
+      speedMul   = random(0.92, 1.20);
+      wanderMul  = random(0.90, 1.25);
+      socialMul  = random(0.85, 1.20);
+      densityMul = random(0.85, 1.10);
+    }
+
+    // Apply social scaling
+    rangoSocial    *= socialMul;
+    rangoRepulsion *= lerp(0.85, 1.20, socialMul);
+    rangoChoque    *= lerp(0.85, 1.15, socialMul);
+
+    // Let some be more/less reactive to the user
+    userPushBase *= lerp(0.80, 1.25, random(1));
+    flipGain     *= lerp(0.75, 1.35, random(1));
+
+    // Slightly vary wall behavior
+    wallRange *= lerp(0.85, 1.20, random(1));
+    wallPush  *= lerp(0.80, 1.15, random(1));
 
     for (int i = 0; i < numSegmentos; i++) {
       segmentos.add(new Segmento(x, y));
@@ -268,7 +310,7 @@ class Gusano {
     // Ease the effective target during the first frames so the head doesn't "snap"
     float tgtX = lerp(cabeza.x, objetivoConFluidoX, spawnEase);
     float tgtY = lerp(cabeza.y, objetivoConFluidoY, spawnEase);
-    cabeza.seguir(tgtX, tgtY);
+    cabeza.seguir(tgtX, tgtY+ velocidad * speedMul );
 
     // Pulse step (use current arousal from previous frame; refined below)
     float modeBoost = lerp(0.86, 1.20, userMode); // softer user-dominant boost
@@ -588,7 +630,7 @@ class Gusano {
       float targetX = segAnterior.x + velFluidoSeg.x * 10;
       float targetY = segAnterior.y + velFluidoSeg.y * 10 - alturaFluidoSeg * 0.3;
 
-      seg.seguir(targetX, targetY);
+      seg.seguir(targetX, targetY, velocidad * speedMul);
 
       // --- Fluid drag + wake (stronger toward the tail) ---
       {
@@ -739,10 +781,8 @@ class Gusano {
   void nuevoObjetivo() {
     Segmento cabeza = segmentos.get(0);
     float anguloActual = atan2(objetivoY - cabeza.y, objetivoX - cabeza.x);
-    float nuevoAngulo = anguloActual + random(-PI/3, PI/3);
-
-    float distancia = random(100, 250);
-
+float nuevoAngulo = anguloActual + random(-PI/3, PI/3) * wanderMul;
+float distancia = random(90, 260) * wanderMul;
     objetivoX = cabeza.x + cos(nuevoAngulo) * distancia;
     objetivoY = cabeza.y + sin(nuevoAngulo) * distancia;
 
@@ -755,7 +795,7 @@ class Gusano {
     strokeWeight(1);
 
     // Precompute once per draw call (avoids per-point allocations/branch work)
-    boolean isFire = (id == 4);
+    boolean isFire = (variant == 4);
     // Fire gradient colors (white head -> orange/red tail)
     color fireC0 = color(255, 255, 255);
     color fireC1 = color(255, 230, 120);
@@ -764,8 +804,9 @@ class Gusano {
 
     // As the jellyfish dies, it loses points (density) and segments (length)
     int nAct = constrain(segActivos, 1, numSegmentos);
-    int puntosMaxBase = int(map(nAct, 1, numSegmentos, 1200, 10000));
-
+int puntosMaxBase = int(map(nAct, 1, numSegmentos, 1200, 10000));
+// More gusanos => scale density down a bit for performance + ecosystem balance
+puntosMaxBase = int(puntosMaxBase * pointDensityMul * densityMul * (shapeScale * shapeScale) / (0.60 * 0.60));
     // Fade-in to prevent initial oversaturation (ADD blend + collapsed geometry)
     float fade = constrain(ageFrames / 45.0, 0, 1);
     // smoothstep for nicer ramp
@@ -835,7 +876,7 @@ class Gusano {
       // parametrization x=i, y=i/235 so the pattern reads correctly.
       float xIn = x_param;
       float yIn = y_param;
-      if (id == 4) {
+      if (variant == 4) {
         xIn = i;
         yIn = i / 235.0;
       }
@@ -855,7 +896,7 @@ class Gusano {
     float k, e, d, q, px, py;
     float headOffset = 184; // may be overridden per-shape
 
-    switch(id) {
+    switch(variant) {
     case 0:
       k = 5 * cos(x / 14) * cos(y / 30);
       e = y / 8 - 13;

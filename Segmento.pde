@@ -16,6 +16,11 @@ class Segmento {
   }
 
   void seguir(float targetX, float targetY) {
+    // Backward-compatible: default uses the global velocidad
+    seguir(targetX, targetY, velocidad);
+  }
+
+  void seguir(float targetX, float targetY, float speed) {
     // Track previous position for motion-based coupling
     prevX = x;
     prevY = y;
@@ -25,10 +30,10 @@ class Segmento {
 
     float distancia = dist(x, y, targetX, targetY);
 
-    float fuerza = velocidad;
+    float fuerza = speed;
     if (distancia < 50) {
       // less slowdown near the target so the head doesn't "crawl"
-      fuerza = map(distancia, 0, 50, velocidad * 0.5, velocidad);
+      fuerza = map(distancia, 0, 50, speed * 0.5, speed);
     }
 
     x += cos(angulo) * fuerza;
