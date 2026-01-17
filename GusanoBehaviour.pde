@@ -195,7 +195,9 @@ class GusanoBehavior {
       cabeza.x = cabeza.prevX + mvx;
       cabeza.y = cabeza.prevY + mvy;
 
-      if (sp > 0.15) {
+      // Grace period: skip head wake for first 45 frames after spawn
+      int framesSinceSpawn = frameCount - g.spawnFrame;
+      if (sp > 0.15 && framesSinceSpawn > 45) {
         float radio = 18;
         float fuerza = constrain(sp * 1.8 * (1.0 + 0.8 * pulse + 0.6 * g.arousal) * lerp(1.0, 1.30, g.userMode) * spawnEase, 0, 7.2);
         fluido.perturbarDir(cabeza.x, cabeza.y, radio, mvx, mvy, fuerza);

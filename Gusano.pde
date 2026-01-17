@@ -123,6 +123,9 @@ class Gusano {
   // Social stress tracking
   float stress = 0.0;
   
+  // Spawn tracking for grace period
+  int spawnFrame = 0;
+  
   Gusano(float x, float y, color cHead, color cTail, int id_) {
     segmentos = new ArrayList<Segmento>();
     colorCabeza = cHead;
@@ -200,6 +203,10 @@ class Gusano {
     // User attitude init
     userAttitude = random(-1, 1);
     userAttTarget = userAttitude;
+    
+    // Set spawn frame for grace period
+    spawnFrame = frameCount;
+    
     behavior = new GusanoBehavior(this);
     body = new GusanoBody(this);
     render = new GusanoRender(this);
@@ -328,6 +335,9 @@ class Gusano {
     float x = random(boundsInset, width - boundsInset);
     float y = random(boundsInset, height - boundsInset);
     ageFrames = 0;
+    
+    // Reset spawn frame for grace period
+    spawnFrame = frameCount;
 
     distribuirSegmentos(x, y);
 

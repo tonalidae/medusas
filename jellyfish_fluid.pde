@@ -81,6 +81,10 @@ float scareProximityMul = 0.0;         // proximity-based threat multiplier
 ArrayList<PVector> mouseHistory = new ArrayList<PVector>();
 final int mouseHistorySize = 8;
 
+// Performance: cached values for debug overlay
+float cachedAvgBravery = 0;
+float cachedAvgArousal = 0;
+
 float t = 0;
 
 float boundsInset = 260;
@@ -104,7 +108,7 @@ void setup() {
   background(bgDark);
   smooth(8);
 
-  fluido = new Fluido(60, 50, 20);
+  fluido = new Fluido(40, 35, 25);  // Reduced from (60, 50, 20) for better performance
   
   // Initialize spatial partitioning grid
   spatialGrid = new SpatialGrid(0, 0, width, height, 150);
@@ -118,7 +122,7 @@ void setup() {
   exitArmed = false;
   gusanosAlpha = 0;
 
-  pointDensityMul = constrain(5.0 / max(1.0, (float)numGusanos), 0.40, 1.00);
+  pointDensityMul = constrain(3.5 / max(1.0, (float)numGusanos), 0.25, 0.80);  // Optimized density
 }
 
 
@@ -209,8 +213,13 @@ if (!exitArmed) {
 void draw() {
   background(bgDark);
   t += PI / 20;
-  fluido.actualizar();
+  
+  // Update fluid less frequently for better performance
+  if (frameCount % 2 == 0) {
+    fluido.actualizar();
+  }
   fluido.dibujar();
+  
   // NEW: Draw tension warning (only shows at higher scare levels)
   if (gusanosSpawned && !exitArmed && scare > 0.60) { // was 0.35 - much later warning
     drawTensionVignette();
@@ -317,12 +326,11 @@ void draw() {
     } else {
       gusanosAlpha = 1.0;
     }
-  }
-  // Dibujo de gusanos (si existen)
+  }  // Dibujo de gusanos (si existen)
   blendMode(ADD);
   
-  // Update spatial grid for neighbor queries
-  if (gusanosSpawned) {
+  // Update spatial grid for neighbor queries - only every other frame
+  if (gusanosSpawned && frameCount % 2 == 0) {
     spatialGrid.clear();
     for (Gusano g : gusanos) {
       spatialGrid.insert(g);
@@ -372,6 +380,12 @@ void drawTensionVignette() {
 boolean showDebug = false;
 
 void drawDebugOverlay() {
+  // Cache expensive calculations every 10 frames
+  if (frameCount % 10 == 0) {
+    cachedAvgBravery = getAvgBravery();
+    cachedAvgArousal = getAvgArousal();
+  }
+  
   pushStyle();
   fill(255, 200);
   textAlign(LEFT, TOP);
@@ -387,8 +401,8 @@ void drawDebugOverlay() {
   
   if (gusanos.size() > 0) {
     y += 10;
-    text("Avg Bravery: " + nf(getAvgBravery(), 1, 2), 10, y); y += 15;
-    text("Avg Arousal: " + nf(getAvgArousal(), 1, 2), 10, y); y += 15;
+    text("Avg Bravery: " + nf(cachedAvgBravery, 1, 2), 10, y); y += 15;
+    text("Avg Arousal: " + nf(cachedAvgArousal, 1, 2), 10, y); y += 15;
   }
   
   popStyle();
@@ -494,9 +508,8 @@ void mouseMoved() {
   } else {
     registrarInteraccion(interactionIntensity);
   }
-
   // Perturbación del fluido: gentle ripples follow the mouse
-  if (frameCount % 3 == 0) {
+  if (frameCount % 4 == 0) {
     float ramp = constrain(frameCount / 90.0, 0, 1);
     ramp = ramp * ramp * (3.0 - 2.0 * ramp);
 
@@ -511,14 +524,24 @@ void reiniciarGusanos() {
   lonelyMode = false;
   lastInteractionMs = millis();
   
+  // Calm the water before spawning to prevent agitation
+  fluido.calmarAgua(0.05);
+  
+  gusanos.clear(); // Clear any existing jellyfish first
+  
   for (int i = 0; i < numGusanos; i++) {
     float x = random(boundsInset, width - boundsInset);
     float y = random(boundsInset, height - boundsInset);
 
     // Alternate color palettes
     color head = (i % 2 == 0) ? p1Head : p2Head;
-    color tail = (i % 2 == 0) ? p1Tail : p2Tail;    // Create jellyfish with base personality
+    color tail = (i % 2 == 0) ? p1Tail : p2Tail;
+    
+    // Create jellyfish with base personality
     Gusano g = new Gusano(x, y, head, tail, i);
+    
+    // Mark spawn frame for grace period
+    g.spawnFrame = frameCount;
     
     // Apply a personality preset with 30% variation for diversity
     GusanoPersonality personality = personalityPresets.getRandom(0.3);
@@ -569,10 +592,12 @@ boolean scareNearGate(float mx, float my) {
 
 // Calculate drag smoothness based on mouse history
 float calculateDragSmoothness() {
-  // Add current position to history
-  mouseHistory.add(new PVector(mouseX, mouseY));
-  if (mouseHistory.size() > mouseHistorySize) {
-    mouseHistory.remove(0);
+  // Only update when dragging for better performance
+  if (mousePressed) {
+    mouseHistory.add(new PVector(mouseX, mouseY));
+    if (mouseHistory.size() > mouseHistorySize) {
+      mouseHistory.remove(0);
+    }
   }
   
   if (mouseHistory.size() < 3) return 1.0; // not enough data = assume smooth

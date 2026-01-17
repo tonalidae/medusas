@@ -12,9 +12,9 @@ class Fluido {
   float offsetX, offsetY;
 
   float rigidez = 0.035;
-  float propagacion = 0.06; // calmer: less aggressive spread
-  float waveDrag = 0.11;     // more damping (ripples fade sooner)
-  float influenciaVel = 0.35;
+  float propagacion = 0.075; // balanced: natural spread with visible wakes
+  float waveDrag = 0.075;     // medium damping: ripples persist but don't overwhelm
+  float influenciaVel = 0.18; // reduced: jellyfish gently drift with water, not jerked around
 
   float[][] tmpVx;
   float[][] tmpVy;
@@ -105,6 +105,20 @@ class Fluido {
 
   void dibujar() {
     render.dibujar();
+  }
+
+  // Calm water velocity (used when jellyfish spawn)
+  void calmarAgua(float factor) {
+    for (int i = 0; i < cols; i++) {
+      for (int j = 0; j < filas; j++) {
+        // Reduce velocity
+        particulas[i][j].vx *= factor;
+        particulas[i][j].vy *= factor;
+        
+        // Fully reset particles to rest position (removes visual displacement)
+        particulas[i][j].y = particulas[i][j].oy;
+      }
+    }
   }
 
   // ============================================================

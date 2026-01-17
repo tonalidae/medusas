@@ -63,17 +63,21 @@ class GusanoBody {
 
       // Directional wake: radius and strength grow slightly toward the tail
       if (sp > 0.10) {
-        float radio = lerp(14, 30, tailT);
-        float fuerza = constrain(
-          sp * lerp(1.2, 2.2, tailT)
-            * (1.0 + 0.8 * pulse + 0.6 * g.arousal)
-            * lerp(1.0, 1.28, g.userMode)
-            * spawnEase,
-          0, 7.0
-        );
-        // Cap wake strength to prevent feedback loops
-        float wakeStrength = constrain(fuerza, 0, maxWakeStrength);
-        fluido.perturbarDir(seg.x, seg.y, radio, mvx, mvy, wakeStrength);
+        // Grace period: skip wake for first 45 frames after spawn (about 0.75 seconds)
+        int framesSinceSpawn = frameCount - g.spawnFrame;
+        if (framesSinceSpawn > 45) {
+          float radio = lerp(14, 30, tailT);
+          float fuerza = constrain(
+            sp * lerp(1.2, 2.2, tailT)
+              * (1.0 + 0.8 * pulse + 0.6 * g.arousal)
+              * lerp(1.0, 1.28, g.userMode)
+              * spawnEase,
+            0, 7.0
+          );
+          // Cap wake strength to prevent feedback loops
+          float wakeStrength = constrain(fuerza, 0, maxWakeStrength);
+          fluido.perturbarDir(seg.x, seg.y, radio, mvx, mvy, wakeStrength);
+        }
       }
 
       seg.actualizar();
