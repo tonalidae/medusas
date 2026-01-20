@@ -10,6 +10,8 @@ class GusanoBody {
   float maxWakeStrength = 3.5;
 
   void actualizar() {
+    // ===== TEST MODE: Physics disabled for shape verification =====
+    /*
     // Soft wall repulsion (pre-clamp), prevents "cornered = frozen" feel
     g.aplicarRepulsionParedes();
 
@@ -181,5 +183,7 @@ class GusanoBody {
       g.cacheVy[i] = g.cacheVy[last];
       g.cacheH[i]  = g.cacheH[last];
     }
+    */
+    // ==================================================================
   }
 }

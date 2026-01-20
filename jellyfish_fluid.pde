@@ -147,6 +147,13 @@ void setup() {
   println("\nInitial population: " + numGusanos + " jellyfish");
   println("Jellyfish will appear after first interaction...");
   println("\n═══════════════════════════════════════════\n");
+  
+  // ===== TEST MODE: Auto-spawn without interaction =====
+  reiniciarGusanos();
+  gusanosSpawned = true;
+  gusanosAlpha = 1.0;
+  println("\n[TEST MODE] Jellyfish spawned immediately - verifying shapes");
+  // ======================================================
 }
 
 
@@ -244,6 +251,8 @@ void draw() {
   }
   fluido.dibujar();
   
+  // ===== TEST MODE: Skip all interaction logic =====
+  /*
   // NEW: Draw tension warning (only shows at higher scare levels)
   if (gusanosSpawned && !exitArmed && scare > 0.60) { // was 0.35 - much later warning
     drawTensionVignette();
@@ -350,7 +359,11 @@ void draw() {
     } else {
       gusanosAlpha = 1.0;
     }
-  }  // Dibujo de gusanos (si existen)
+  }
+  */
+  // ==================================================
+  
+  // Dibujo de gusanos (si existen)
   blendMode(ADD);
   
   // Update spatial grid for neighbor queries - only every other frame

@@ -145,8 +145,9 @@ class Gusano {
     colorCola = cTail;
     id = id_;
     
-    // CHANGED: Equal distribution across all 6 variants (0-5)
-    variant = int(random(6)); // randomly choose from 0, 1, 2, 3, 4, or 5
+    // ===== TEST MODE: Force all jellyfish to use variant 0 only =====
+    variant = int(random(5)); // int(random(6)); // randomly choose from 0, 1, 2, 3, 4, or 5
+    // ================================================================
 
     // Size + behavior diversity (ecosystem feel)
     // Wider size range with occasional juveniles and large adults

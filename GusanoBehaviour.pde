@@ -53,6 +53,8 @@ class GusanoBehavior {
   boolean wasInUserMode = false; // track previous state
 
   void actualizar() {
+    // ===== TEST MODE: All behavior disabled for shape verification =====
+    /*
     // --- Spawn easing: reduce harsh initial motion after spawn/respawn ---
     // 0..1 ramp over first ~60 frames
     float spawnEase = constrain(g.ageFrames / 60.0, 0, 1);
@@ -484,5 +486,13 @@ class GusanoBehavior {
     // Apply social steering to the head (BODY will handle wall repulsion + segment updates)
     cabeza.x += social.x;
     cabeza.y += social.y;
+    */
+    
+    // Keep essential spawn tracking for rendering
+    g.ageFrames++;
+    g.spawnEaseNow = 1.0;
+    g.pulseNow = 0.0;
+    g.relaxNow = 1.0;
+    // ==================================================================
   }
 }
