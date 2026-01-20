@@ -2,6 +2,14 @@
 // Gusano.pde
 // ============================================================
 
+// Life stage enum
+enum LifeStage {
+  EPHYRA,    // Newborn - small, fast, vulnerable (0-60s)
+  JUVENILE,  // Growing - moderate size, learning (60s-6min)
+  ADULT,     // Mature - full size, confident (6min-30min)
+  SENESCENT  // Aging - slower, frailer (30min+)
+}
+
 class Gusano {
   ArrayList<Segmento> segmentos;
   color colorCabeza;
@@ -13,6 +21,14 @@ class Gusano {
   int id;
   // Variant/type (shape) separate from unique id
   int variant = 0;           // 0..4
+  
+  // --- Life Cycle System ---
+  LifeStage lifeStage = LifeStage.ADULT;  // Current life stage
+  float ageSeconds = 0;                    // Age in seconds
+  float stageSpeedMul = 1.0;               // Stage-based speed modifier
+  float stageScaleMul = 1.0;               // Stage-based size modifier
+  float stageMortalityMul = 1.0;           // Stage-based crowding damage modifier
+  float stageCuriosityMul = 1.0;           // Stage-based curiosity modifier
 
   // Per-gusano variation knobs (ecosystem diversity)
   float speedMul = 1.0;      // movement speed multiplier
@@ -87,10 +103,33 @@ class Gusano {
   float bendSmooth       = 0.12; // 0..1 soft spine smoothing (keeps it organic)
   
   // --- Tentacle flow (perpendicular oscillation for natural trailing motion) ---
-  float tentacleWaveFreq = 0.048;   // speed of wave propagation down body (40% slower)
-  float tentacleWaveAmp = 2.5;     // amplitude of lateral wiggle (pixels)
+  float tentacleWaveFreq = 0.0021;   // one complete cycle in ~50 seconds (10x slower for contemplative pace)
+  float tentacleWaveAmp = 0.15;     // ULTRA SUBTLE amplitude (0.15 pixels) - minimal deformation
   float tentaclePhase = 0;         // current wave phase
   float tentacleLagMul = 1.0;      // how much segments lag behind (drag effect)
+  
+  // --- Tentacle pause between cycles (breathing rhythm: REST is primary) ---
+  boolean tentaclePaused = false;   // whether in pause state
+  int tentacleResumeFrame = 0;      // when to resume after pause
+  float tentaclePauseChance = 0.95; // 95% chance to pause (REST IS PRIMARY MODE)
+  int tentaclePauseMin = 1800;      // minimum pause frames (~30 seconds of rest)
+  int tentaclePauseMax = 2400;      // maximum pause frames (~40 seconds of rest)
+  
+  // --- Animation time (replaces global 't' for independent motion control) ---
+  float animTime = 0;               // local animation time for shape animation
+  boolean animPaused = false;       // whether animation is paused
+  int animResumeFrame = 0;          // when to resume animation
+  int lastAnimCycleFrame = 0;       // track when last cycle completed (prevent immediate pauses)
+  float animPauseChance = 0.08;     // probability of pausing after cycle (lower = more active)
+  int animPauseMin = 30;            // minimum pause frames (0.5s)
+  int animPauseMax = 75;            // maximum pause frames (1.25s)
+  int animMinActiveFrames = 90;     // minimum frames of activity before allowing pause (1.5s)
+  
+  // --- Vertical oscillation for up-down swimming motion (variants 1-2) ---
+  float verticalSwimAmp = 0;        // amplitude of vertical oscillation (pixels)
+  float verticalSwimFreq = 0;       // frequency of vertical motion
+  float verticalSwimPhaseDiv = 18;  // phase division for wave propagation (from code golf: t/18)
+  float animSpeed = 1.0;            // speed multiplier (set per variant)
   
   GusanoBehavior behavior;
   GusanoBody body;
@@ -106,6 +145,28 @@ class Gusano {
   float vida = 100;
   int segActivos;           // cuántos segmentos están "vivos" (afecta dibujo y update)
   int tickCambioCuerpo = 0; // controla velocidad de perder/ganar segmentos
+  
+  // --- AUTOPOIETIC LIFE SYSTEM ---
+  // Energy and metabolism
+  float energyMax = 100;
+  float energy = 100;           // current energy level (0-100)
+  float metabolism = 1.0;       // energy consumption rate multiplier
+  float hunger = 0;             // 0=sated, 1=starving (affects behavior)
+  float feedingEfficiency = 1.0; // how well this individual extracts energy
+  
+  // Circadian rhythm (creates natural activity cycles)
+  float circadianPhase = 0;     // 0-TWO_PI, advances slowly over time
+  float circadianFreq = 0.0008; // ~13 minutes per full cycle at 30fps
+  float circadianAmp = 0.35;    // how much rhythm affects activity
+  float activityLevel = 1.0;    // current activity multiplier (0.65-1.35)
+  
+  // Population awareness
+  float crowdingStress = 0;     // accumulates when too many neighbors
+  int nearbyCount = 0;          // cached neighbor count
+  boolean canReproduce = false; // eligible to spawn offspring
+  
+  // Simulated cursor vertical drift (for demo mode)
+  float simCursorVerticalOffset = 0;  // Slow brownian motion for vertical variation
 
   // --- Fluid sample cache (PER SEGMENT) ---
   // Avoid sampling the fluid per drawn point (very expensive).
@@ -115,6 +176,7 @@ class Gusano {
 
   // Age since spawn/respawn (frames) used to avoid initial additive oversaturation
   int ageFrames = 0;
+  int spawnFrame = 0;  // frameCount when spawned (for age tracking)
 
   // --- Per-frame values produced by GusanoBehavior (used by body update) ---
   float spawnEaseNow = 1.0;
@@ -122,6 +184,7 @@ class Gusano {
   float relaxNow = 1.0;
   float S_userNow = 0.0;
   float S_socialNow = 0.0;
+  float deathFade = 1.0;  // Alpha multiplier for death/rebirth animation
 
   // Lonely mode transition tracking
   float rangoSocialOriginal;
@@ -133,11 +196,12 @@ class Gusano {
   // Scare resistance from personality
   float scareResistance = 0.5;
   
+  // === DEATH ANIMATION SYSTEM ===
+  float deathTumbleDirection = 1.0;   // 1.0 = clockwise, -1.0 = counterclockwise (randomized per spawn)
+  float deathSinkAccel = 0.0;         // Accumulating downward acceleration during death
+  
   // Social stress tracking
   float stress = 0.0;
-  
-  // Spawn tracking for grace period
-  int spawnFrame = 0;
   
   Gusano(float x, float y, color cHead, color cTail, int id_) {
     segmentos = new ArrayList<Segmento>();
@@ -148,6 +212,30 @@ class Gusano {
     // ===== TEST MODE: Force all jellyfish to use variant 0 only =====
     variant = int(random(5)); // int(random(6)); // randomly choose from 0, 1, 2, 3, 4, or 5
     // ================================================================
+    
+
+
+    // variant = 0;  // distribute variants 0-4 evenly by id
+
+    // Set animation speed and vertical motion per variant
+    if (variant == 4) {
+      animSpeed = PI / 180.0;  // Variant 4: keep original speed
+    } else {
+      animSpeed = PI / 100.0;  // Variants 0-3: faster (~29% speed increase)
+    }
+    
+    // Configure vertical swimming motion for variants 1-2
+    if (variant == 1) {
+      verticalSwimAmp = random(18, 25);   // Moderate amplitude for graceful motion
+      verticalSwimFreq = 0.15;             // Synchronized with shape animation
+    } else if (variant == 2) {
+      verticalSwimAmp = random(12, 18);   // Smaller amplitude for compact form
+      verticalSwimFreq = 0.22;             // Slightly faster oscillation
+    }
+    
+    // === DEATH ANIMATION: Randomize tumble direction for organic variety ===
+    deathTumbleDirection = (random(1) < 0.5) ? 1.0 : -1.0;  // 50% clockwise, 50% counterclockwise
+
 
     // Size + behavior diversity (ecosystem feel)
     // Wider size range with occasional juveniles and large adults
@@ -165,6 +253,14 @@ class Gusano {
     socialMul  = random(0.80, 1.35);
     densityMul = random(0.80, 1.15);
     
+    // Initialize autopoietic life systems
+    energy = random(70, 100);  // start with varied energy levels
+    metabolism = random(0.85, 1.15);  // individual metabolic rates
+    feedingEfficiency = random(0.90, 1.10);  // feeding ability variation
+    circadianPhase = random(TWO_PI);  // desynchronized internal clocks
+    circadianFreq = random(0.0006, 0.0010);  // 10-17 min cycles
+    circadianAmp = random(0.25, 0.45);  // rhythm strength variation
+    
     // Depth layer: creates visual stratification
     depthLayer = random(1.0);
     depthPhase = random(TWO_PI);
@@ -173,18 +269,20 @@ class Gusano {
     
     // Tentacle motion: each jellyfish has unique wiggle pattern
     tentaclePhase = random(TWO_PI);
-    tentacleWaveFreq = random(0.036, 0.060);  // 40% slower tentacle wave propagation
+    tentacleWaveFreq = random(0.002, 0.0032);  // ultra slow (100-160s per cycle) - 10x slower
     
-    // Variants 0-3 need smaller amplitude to maintain jellyfish bell shape
-    // Variant 4 can be more expressive (digital organism)
+    // Variants 0-3: Ultra-subtle - minimal deformation, just slight drift
+    // Variant 4: Slightly more visible but still barely noticeable
     if (variant != 4) {
-      tentacleWaveAmp = random(0.8, 1.5);  // Smaller for cohesive bell
-      constraintStiff = 0.92;  // Stronger constraints
-      longitudSegmento = 10;   // Tighter segments
+      tentacleWaveAmp = random(0.08, 0.18);  // 0.08-0.18 pixels - almost no wiggle
+      constraintStiff = 0.94;  // Very strong constraints keep bell locked
+      longitudSegmento = 10;   // Tighter segments for rigid form
     } else {
-      tentacleWaveAmp = random(1.8, 3.5);  // Original expressive motion
+      tentacleWaveAmp = random(0.12, 0.22);  // 0.12-0.22 pixels - still minimal
+      constraintStiff = 0.90;  // Stronger constraints
+      longitudSegmento = 11;   // Tighter segments
     }
-    tentacleLagMul = random(0.85, 1.15);
+    tentacleLagMul = random(0.95, 1.05);  // Very tight range - minimal variation
 
     // Make the special one a bit smaller and a tad more "nervous"
     if (variant == 4) {
@@ -234,6 +332,10 @@ class Gusano {
     cacheVx = new float[numSegmentos];
     cacheVy = new float[numSegmentos];
     cacheH  = new float[numSegmentos];
+    
+    // Initialize spawn time
+    spawnFrame = frameCount;
+    ageFrames = 0;
 
     // Oscillator/arousal init (per jellyfish personality)
     phase = random(TWO_PI);
@@ -401,10 +503,24 @@ class Gusano {
     actualizarCacheFluido();
   }
 
-  // Spread segments slightly along a random direction so the body is not fully collapsed at spawn/respawn.
+  // Spread segments aligned with fluid flow at spawn point (or random if fluid is calm).
   // This prevents huge localized over-bright regions when using blendMode(ADD).
   void distribuirSegmentos(float x, float y) {
-    float ang = random(TWO_PI);
+    // Sample fluid velocity at spawn point
+    PVector fluidVel = fluido.obtenerVelocidad(x, y);
+    float speed = sqrt(fluidVel.x * fluidVel.x + fluidVel.y * fluidVel.y);
+    
+    float ang;
+    float speedThreshold = 0.5;  // minimum speed to trust flow direction
+    
+    if (speed > speedThreshold) {
+      // Align with fluid flow direction - jellyfish emerges from the flow
+      ang = atan2(fluidVel.y, fluidVel.x);
+    } else {
+      // Fallback to random when fluid is calm/noisy
+      ang = random(TWO_PI);
+    }
+    
     float step = 4.0;
     for (int i = 0; i < segmentos.size(); i++) {
       Segmento s = segmentos.get(i);

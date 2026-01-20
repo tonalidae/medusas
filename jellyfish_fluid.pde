@@ -3,16 +3,6 @@
 // - Imports + globals
 // - setup(), draw(), mouse handlers
 // - utilities (reiniciarGusanos)
-//
-// IMPROVED BEHAVIOR SYSTEM:
-// 1. Personality presets - reduces parameter complexity
-// 2. Visual feedback - color tints show arousal/attitude/stress
-// 3. Hysteresis - prevents mode flip-flopping
-// 4. Gradual transitions - lonely mode and exit are smooth
-// 5. Spatial partitioning - O(N) instead of O(N²) neighbor queries
-// 6. Bravery system - group courage affects scare accumulation
-// 7. Escape choreography - jellyfish swim away before fading
-// ============================================================
 
 import java.util.HashMap;
 import java.util.HashSet;
@@ -37,7 +27,18 @@ int spawnDueMs = 0;                // momento en ms cuando deben aparecer
 int lastInteractionMs = 0;         // última interacción del usuario
 boolean exitArmed = false;          // estamos en modo salida?
 int exitStartMs = 0;               // inicio del fade-out
-final int spawnDelayMs = 1000;      // 1 segundo después de la última interacción
+
+// ===== VIDEO DEMO MODE: Fast spawn with pre-interaction =====
+final boolean DEMO_MODE = true;      // Set to false to restore interaction-based spawning
+final int DEMO_SPAWN_DELAY_MS = 2000; // 2 seconds after init before jellyfish appear
+final int DEMO_INTERACTION_DURATION = 1500; // 1.5 seconds of water perturbation before spawn
+final int DEMO_COHORT_LIFETIME_MS = 1800000; // 30 minutes: jellyfish group lifetime before despawn/restart (10x slower)
+final int DEMO_COHORT_FADE_MS = 2000; // 2 seconds: smooth fade-out before despawn
+final int spawnDelayMs = DEMO_MODE ? DEMO_SPAWN_DELAY_MS : 1000;
+
+int cohortSpawnTimeMs = 0; // When current group spawned
+int cohortFadeStartMs = 0; // When fade-out begins
+
 final int idleToExitMs = 12000;     // sin interacción => empiezan a irse (MUCHO más largo)
 final int fadeOutMs = 1200;         // duración del desvanecimiento (ajusta)
 
@@ -128,6 +129,17 @@ void setup() {
   spawnArmed = false;
   exitArmed = false;
   gusanosAlpha = 0;
+  
+  // ===== VIDEO DEMO MODE: Auto-spawn after 2 seconds =====
+  if (DEMO_MODE) {
+    spawnArmed = true;
+    spawnDueMs = millis() + DEMO_SPAWN_DELAY_MS;
+    lastInteractionMs = millis();  // Start the timer
+    cohortSpawnTimeMs = 0; // Will be set when gusanos actually spawn
+  }
+  
+  // Initialize behavior phase system
+  initBehaviorPhases();
 
   // Calculate rendering density based on population
   numGusanos = params.defaultPopulation;
@@ -147,13 +159,6 @@ void setup() {
   println("\nInitial population: " + numGusanos + " jellyfish");
   println("Jellyfish will appear after first interaction...");
   println("\n═══════════════════════════════════════════\n");
-  
-  // ===== TEST MODE: Auto-spawn without interaction =====
-  reiniciarGusanos();
-  gusanosSpawned = true;
-  gusanosAlpha = 1.0;
-  println("\n[TEST MODE] Jellyfish spawned immediately - verifying shapes");
-  // ======================================================
 }
 
 
@@ -251,15 +256,120 @@ void draw() {
   }
   fluido.dibujar();
   
-  // ===== TEST MODE: Skip all interaction logic =====
-  /*
-  // NEW: Draw tension warning (only shows at higher scare levels)
-  if (gusanosSpawned && !exitArmed && scare > 0.60) { // was 0.35 - much later warning
+  // Tension warning - visual feedback when jellyfish are stressed
+  if (gusanosSpawned && !exitArmed && scare > 0.60) {
     drawTensionVignette();
   }
 
   int now = millis();
-  // 1) Spawn delayed: solo después de 1000ms SIN nuevas interacciones
+  
+  // ===== DEMO MODE: Simulate water interaction before spawn + active phase ripples =====
+  if (DEMO_MODE && gusanosSpawned && cohortSpawnTimeMs > 0) {
+    // ===== ACTIVE PHASE: Strong water ripples based on behavior =====
+    float rippleStrength = getWaterStrengthForBehavior();
+    int waveFrequency = getWaveFrequencyForBehavior();
+    
+    // Random screen-scattered perturbation points (5-6 locations)
+    if (frameCount % 4 == 0) {
+      for (int i = 0; i < 5; i++) {
+        float px = random(width * 0.1, width * 0.9);
+        float py = random(height * 0.1, height * 0.9);
+        fluido.perturbar(px, py, 120, rippleStrength * 0.6);
+      }
+    }
+    
+    // Concentric waves from screen center
+    if (frameCount % waveFrequency == 0) {
+      float cx = width / 2;
+      float cy = height * 0.45;
+      fluido.perturbar(cx, cy, 200, rippleStrength);
+    }
+    
+    // ===== SIMULATED CLICKS: HIGH ENERGY dramatic ring ripples during demo =====
+    // Trigger big concentric ripples occasionally based on behavior phase
+    int clickFrequency = (getCurrentBehaviorPhase() == 1) ? 60 : 120; // More frequent clicks (was 90/180)
+    
+    if (frameCount % clickFrequency == 0) {
+      // Random location for simulated click
+      float clickX = random(width * 0.15, width * 0.85);
+      float clickY = random(height * 0.15, height * 0.85);
+      float clickStrength = 12.0;  // INCREASED: Very strong ripple (was 9.0)
+      
+      // Create dramatic concentric ring - LARGER RADIUS
+      fluido.perturbar(clickX, clickY, 350, clickStrength);  // Increased from 280
+      
+      // MORE secondary ripples for layered effect
+      for (int i = 0; i < 4; i++) {  // Increased from 2 to 4
+        float offsetX = random(-120, 120);  // Larger offset range
+        float offsetY = random(-120, 120);
+        fluido.perturbar(clickX + offsetX, clickY + offsetY, 250, clickStrength * 0.7);  // Stronger secondary
+      }
+    }
+  } else if (DEMO_MODE && !gusanosSpawned && spawnArmed) {
+    // ===== PRE-SPAWN: Building intensity water interaction =====
+    int timeSinceStart = now - (spawnDueMs - DEMO_SPAWN_DELAY_MS);
+    
+    // Add water perturbations for first 1.5 seconds (before jellyfish appear)
+    if (timeSinceStart < DEMO_INTERACTION_DURATION) {
+      // Create dynamic "figure-8" water touches that match cursor pattern
+      float simTime = timeSinceStart * 0.005;
+      float simRadius = 100;
+      float centerX = width / 2;
+      float centerY = height * 0.45;
+      
+      float touchX = centerX + cos(simTime) * simRadius;
+      float touchY = centerY + sin(simTime * 2.0) * simRadius * 0.5;
+      
+      // Building intensity ripples (2.0 -> 5.0)
+      float buildingStrength = 2.0 + (3.0 * (timeSinceStart / DEMO_INTERACTION_DURATION));
+      
+      // Add water ripples at simulated touch points + screen-scattered
+      if (frameCount % 3 == 0) {
+        fluido.perturbar(touchX, touchY, 100, buildingStrength);
+        // Add 3 random screen points for organic feel
+        for (int i = 0; i < 3; i++) {
+          float px = random(width * 0.15, width * 0.85);
+          float py = random(height * 0.15, height * 0.85);
+          fluido.perturbar(px, py, 80, buildingStrength * 0.5);
+        }
+      }
+      
+      // Occasional concentric waves during build-up
+      if (frameCount % 30 == 0) {
+        fluido.perturbar(centerX, centerY, 200, buildingStrength * 1.2);
+      }
+    }
+  }
+  
+  // ===== COHORT LIFETIME: Fade and respawn after 3 minutes =====
+  if (DEMO_MODE && gusanosSpawned && cohortSpawnTimeMs > 0) {
+    int timeSinceCohortSpawn = now - cohortSpawnTimeMs;
+    
+    // Check if cohort should start fading
+    if (timeSinceCohortSpawn >= DEMO_COHORT_LIFETIME_MS && cohortFadeStartMs == 0) {
+      cohortFadeStartMs = now; // Start fade
+    }
+    
+    // Apply fade-out
+    if (cohortFadeStartMs > 0) {
+      int timeSinceFadeStart = now - cohortFadeStartMs;
+      float fadeAlpha = 1.0 - constrain(timeSinceFadeStart / (float)DEMO_COHORT_FADE_MS, 0, 1);
+      gusanosAlpha = fadeAlpha;
+      
+      // Clear and reset when fade complete
+      if (fadeAlpha <= 0.01) {
+        gusanos.clear();
+        gusanosSpawned = false;
+        spawnArmed = true;
+        spawnDueMs = now + DEMO_SPAWN_DELAY_MS;
+        cohortSpawnTimeMs = 0;
+        cohortFadeStartMs = 0;
+        gusanosAlpha = 0;
+      }
+    }
+  }
+  
+  // 1) Spawn delayed: solo después de 1000ms (o 2000ms en DEMO_MODE)
   if (!gusanosSpawned) {
     if (spawnArmed && now >= spawnDueMs) {
       reiniciarGusanos();           // crea gusanos aquí
@@ -267,6 +377,11 @@ void draw() {
       spawnArmed = false;
       lastInteractionMs = now;
       gusanosAlpha = 1.0;
+      cohortSpawnTimeMs = now;      // Track when this cohort spawned
+      cohortFadeStartMs = 0;        // Not fading yet
+      
+      // Reset behavior phase to beginning
+      resetBehaviorPhase();
       
       // NEW: Reset scare/intensity on spawn (fresh start)
       scare = 0.0;
@@ -275,93 +390,103 @@ void draw() {
     }
   } else {
 
-    // (A) Micro-limpieza de scare mientras no están saliendo
-    if (!exitArmed) {
-      if (scare < 0.001) scare = 0;
-      if (scareDrive < 0.001) scareDrive = 0;
-    }    // (B) Si ya existen y el usuario deja de interactuar, activa modo salida (MUCHO más tarde)
-    int idleMs = now - lastInteractionMs;
-    if (!lonelyMode && idleMs > idleToLonelyMs) {
-      lonelyMode = true;
-      // Signal to jellyfish: reduce cohesion, wander more (with individual timing)
-      for (int i = 0; i < gusanos.size(); i++) {
-        Gusano g = gusanos.get(i);
-        // Store original values before modifying
-        g.rangoSocialOriginal = g.rangoSocial;
-        g.wanderMulOriginal = g.wanderMul;
-        g.frecuenciaCambioOriginal = g.frecuenciaCambio;
-        
-        // Individual timing offset based on personality and index
-        float offset = i * 80 + g.userAttitude * 200; // curious ones leave later
-        g.lonelyTransitionStart = now + (int)offset;
-      }
-    }
+    // ===== INTERACTION REQUIREMENTS (DISABLED IN DEMO_MODE) =====
+    // In DEMO_MODE, jellyfish stay alive for 3-minute cohort cycle
+    // In normal mode, jellyfish require user interaction or will enter exit mode
     
-    // Gradual lonely transition for each jellyfish
-    if (lonelyMode) {
-      for (Gusano g : gusanos) {
-        if (now >= g.lonelyTransitionStart && g.lonelyBlend < 1.0) {
-          g.lonelyBlend += 0.008; // smooth transition over ~2 seconds
-          g.lonelyBlend = min(1.0, g.lonelyBlend);
+    if (!DEMO_MODE) {
+      // (A) Micro-limpieza de scare mientras no están saliendo
+      if (!exitArmed) {
+        if (scare < 0.001) scare = 0;
+        if (scareDrive < 0.001) scareDrive = 0;
+      }
+      
+      // (B) Si ya existen y el usuario deja de interactuar, activa modo salida (MUCHO más tarde)
+      int idleMs = now - lastInteractionMs;
+      if (!lonelyMode && idleMs > idleToLonelyMs) {
+        lonelyMode = true;
+        // Signal to jellyfish: reduce cohesion, wander more (with individual timing)
+        for (int i = 0; i < gusanos.size(); i++) {
+          Gusano g = gusanos.get(i);
+          // Store original values before modifying
+          g.rangoSocialOriginal = g.rangoSocial;
+          g.wanderMulOriginal = g.wanderMul;
+          g.frecuenciaCambioOriginal = g.frecuenciaCambio;
           
-          // Interpolate parameters
-          g.rangoSocial = lerp(g.rangoSocialOriginal, g.rangoSocialOriginal * 0.65, g.lonelyBlend);
-          g.wanderMul = lerp(g.wanderMulOriginal, g.wanderMulOriginal * 1.45, g.lonelyBlend);
-          g.frecuenciaCambio = lerp(g.frecuenciaCambioOriginal, g.frecuenciaCambioOriginal * 0.70, g.lonelyBlend);
+          // Individual timing offset based on personality and index
+          float offset = i * 80 + g.userAttitude * 200; // curious ones leave later
+          g.lonelyTransitionStart = now + (int)offset;
         }
       }
-    }
-    
-    if (!exitArmed && lonelyMode && idleMs > (idleToLonelyMs + lonelyToExitMs)) {
-      scaredExit = false;
-      exitArmed = true;
-      exitStartMs = now;
-    }    // (C) Fade-out mientras salen
-    if (exitArmed) {
-      float u = constrain((now - exitStartMs) / (float)fadeOutMs, 0, 1);
-      u = u*u*(3.0 - 2.0*u);     // smoothstep
       
-      // Add escape choreography: jellyfish swim away from center before fading
-      float escapePhase = constrain(u * 2.0, 0, 1); // first half of fade
-      for (Gusano g : gusanos) {
-        if (escapePhase < 1.0) {
-          // Push away from center
-          float cx = width / 2;
-          float cy = height / 2;
-          if (g.segmentos != null && g.segmentos.size() > 0) {
-            Segmento head = g.segmentos.get(0);
-            float dx = head.x - cx;
-            float dy = head.y - cy;
-            float dist = sqrt(dx*dx + dy*dy);
-            if (dist > 0) {
-              float escapeForce = (scaredExit ? 4.5 : 2.5) * escapePhase;
-              head.x += (dx / dist) * escapeForce;
-              head.y += (dy / dist) * escapeForce;
-            }
+      // Gradual lonely transition for each jellyfish
+      if (lonelyMode) {
+        for (Gusano g : gusanos) {
+          if (now >= g.lonelyTransitionStart && g.lonelyBlend < 1.0) {
+            g.lonelyBlend += 0.008; // smooth transition over ~2 seconds
+            g.lonelyBlend = min(1.0, g.lonelyBlend);
+            
+            // Interpolate parameters
+            g.rangoSocial = lerp(g.rangoSocialOriginal, g.rangoSocialOriginal * 0.65, g.lonelyBlend);
+            g.wanderMul = lerp(g.wanderMulOriginal, g.wanderMulOriginal * 1.45, g.lonelyBlend);
+            g.frecuenciaCambio = lerp(g.frecuenciaCambioOriginal, g.frecuenciaCambioOriginal * 0.70, g.lonelyBlend);
           }
         }
       }
       
-      gusanosAlpha = 1.0 - u;// Cuando ya es invisible: limpiar y volver al estado inicial
-      if (gusanosAlpha <= 0.01) {
-        gusanos.clear();
-        gusanosSpawned = false;
-        spawnArmed = false;
-        exitArmed = false;
-        gusanosAlpha = 0.0;
-        
-        // NEW: If it was a scared exit, mark the time
-        if (scaredExit) {
-          scaredExitCompleteMs = now;
-          scaredExit = false; // reset flag
-        }
+      if (!exitArmed && lonelyMode && idleMs > (idleToLonelyMs + lonelyToExitMs)) {
+        scaredExit = false;
+        exitArmed = true;
+        exitStartMs = now;
       }
-    } else {
-      gusanosAlpha = 1.0;
-    }
+      
+      // (C) Fade-out mientras salen
+      if (exitArmed) {
+        float u = constrain((now - exitStartMs) / (float)fadeOutMs, 0, 1);
+        u = u*u*(3.0 - 2.0*u);     // smoothstep
+        
+        // Add escape choreography: jellyfish swim away from center before fading
+        float escapePhase = constrain(u * 2.0, 0, 1); // first half of fade
+        for (Gusano g : gusanos) {
+          if (escapePhase < 1.0) {
+            // Push away from center
+            float cx = width / 2;
+            float cy = height / 2;
+            if (g.segmentos != null && g.segmentos.size() > 0) {
+              Segmento head = g.segmentos.get(0);
+              float dx = head.x - cx;
+              float dy = head.y - cy;
+              float dist = sqrt(dx*dx + dy*dy);
+              if (dist > 0) {
+                float escapeForce = (scaredExit ? 4.5 : 2.5) * escapePhase;
+                head.x += (dx / dist) * escapeForce;
+                head.y += (dy / dist) * escapeForce;
+              }
+            }
+          }
+        }
+        
+        gusanosAlpha = 1.0 - u;  // Fade out as they leave
+        
+        // Cuando ya es invisible: limpiar y volver al estado inicial
+        if (gusanosAlpha <= 0.01) {
+          gusanos.clear();
+          gusanosSpawned = false;
+          spawnArmed = false;
+          exitArmed = false;
+          gusanosAlpha = 0.0;
+          
+          // NEW: If it was a scared exit, mark the time
+          if (scaredExit) {
+            scaredExitCompleteMs = now;
+            scaredExit = false; // reset flag
+          }
+        }
+      } else {
+        gusanosAlpha = 1.0;
+      }
+    } // End of !DEMO_MODE check
   }
-  */
-  // ==================================================
   
   // Dibujo de gusanos (si existen)
   blendMode(ADD);
@@ -374,21 +499,103 @@ void draw() {
     }
   }
   
+  // ===== AUTONOMOUS REPRODUCTION SYSTEM =====
+  // Jellyfish self-replicate when conditions favor (autopoietic ecosystem)
+  if (gusanosSpawned && !exitArmed && frameCount % 120 == 0) {  // Check every 4 seconds
+    // === DEBUG OVERLAY: Cursor centerline and depth visualization ===
+    if (DEMO_MODE && showDebug) {
+      pushStyle();
+      
+      // Show simulated cursor's fixed vertical center (suspected convergence point)
+      stroke(255, 255, 0, 120);
+      strokeWeight(2);
+      float cursorCenterY = height * 0.45;
+      line(0, cursorCenterY, width, cursorCenterY);
+      
+      // Label the centerline
+      fill(255, 255, 0, 180);
+      textAlign(LEFT, CENTER);
+      text("Cursor Center (45%): " + int(cursorCenterY) + "px", 10, cursorCenterY - 15);
+      
+      // Visualize depth layers for each jellyfish
+      stroke(100, 100, 255, 100);
+      strokeWeight(1);
+      for (Gusano g : gusanos) {
+        if (g.segmentos != null && g.segmentos.size() > 0) {
+          Segmento head = g.segmentos.get(0);
+          // Calculate current depth (same logic as GusanoRender)
+          float depthOsc = sin(g.depthPhase) * g.depthAmp;
+          float depthNow = constrain(g.depthLayer + depthOsc, 0, 1);
+          // Draw horizontal line showing current depth position
+          float depthY = map(depthNow, 0, 1, head.y + 60, head.y - 60);
+          line(head.x - 15, depthY, head.x + 15, depthY);
+        }
+      }
+      
+      popStyle();
+    }
+    
+    int currentPop = gusanos.size();
+    int targetPop = numGusanos;  // configurable population target
+    
+    if (currentPop < targetPop * 1.5) {  // Allow up to 150% of target
+      for (int i = 0; i < gusanos.size(); i++) {
+        Gusano g = gusanos.get(i);
+        if (g.canReproduce && random(1) < 0.03) {  // 3% chance per check when eligible
+          // Spawn offspring near parent
+          Segmento parent = g.segmentos.get(0);
+          float offsetDist = random(60, 120);
+          float offsetAngle = random(TWO_PI);
+          float childX = parent.x + cos(offsetAngle) * offsetDist;
+          float childY = parent.y + sin(offsetAngle) * offsetDist;
+          
+          // Keep within bounds
+          childX = constrain(childX, boundsInset, width - boundsInset);
+          childY = constrain(childY, boundsInset, height - boundsInset);
+          
+          // Inherit some traits (with mutation)
+          color childHeadColor = lerpColor(g.colorCabeza, color(random(255), random(255), random(255)), 0.15);
+          color childTailColor = lerpColor(g.colorCola, color(random(255), random(255), random(255)), 0.15);
+          
+          Gusano child = new Gusano(childX, childY, childHeadColor, childTailColor, gusanos.size());
+          
+          // Offspring start as ephyra (newborn stage)
+          child.lifeStage = LifeStage.EPHYRA;
+          child.ageSeconds = 0;
+          child.ageFrames = 0;
+          child.spawnFrame = frameCount;
+          
+          gusanos.add(child);
+          spatialGrid.insert(child);  // Add to spatial grid immediately
+          
+          // Parent loses energy from reproduction
+          g.energy -= 30;
+          g.canReproduce = false;  // cooldown
+          
+          // Limit total spawns per cycle
+          if (gusanos.size() >= targetPop * 1.5) break;
+        }
+      }
+    }
+  }
+  // ==========================================
+  
   for (Gusano gusano : gusanos) {
     gusano.actualizar();
     gusano.dibujarForma();
   }
   
   blendMode(BLEND);
-    // Draw debug overlay if enabled
+  
+  // Draw debug overlay if enabled
   if (showDebug) {
     drawDebugOverlay();
   }
   
-  // Draw interaction cursor feedback
-  if (gusanosSpawned) {
-    drawInteractionCursor();
-  }
+  // Interaction cursor disabled for clean demo view
+  // if (gusanosSpawned) {
+  //   drawInteractionCursor();
+  // }
 }
 
 // Visual tension feedback: red vignette warning when scare builds up
@@ -441,6 +648,9 @@ void drawDebugOverlay() {
     text("Avg Bravery: " + nf(cachedAvgBravery, 1, 2), 10, y); y += 15;
     text("Avg Arousal: " + nf(cachedAvgArousal, 1, 2), 10, y); y += 15;
   }
+  
+  // ALL DEBUG VISUALIZATION REMOVED (arrows and circles)
+  // Clean jellyfish appearance - no debug overlays
   
   popStyle();
 }
@@ -509,6 +719,12 @@ void keyPressed() {
   }
 }
 
+// ============================================================
+// MOUSE INTERACTION DISABLED FOR DEMO MODE
+// The jellyfish respond to simulated cursor only (no real input)
+// ============================================================
+
+/*
 void mouseDragged() {
   mouseStill = false; // reset calm state
   
@@ -598,6 +814,14 @@ void mouseMoved() {
     fluido.perturbar(mouseX, mouseY, 30, strength);
   }
 }
+*/
+
+// Empty placeholder functions while demo mode is active
+// Real user interaction will be re-enabled later
+void mouseDragged() {}
+void mousePressed() {}
+void mouseMoved() {}
+
 void reiniciarGusanos() {
   scare = 0.0;
   scaredExit = false;
@@ -610,13 +834,17 @@ void reiniciarGusanos() {
   
   gusanos.clear(); // Clear any existing jellyfish first
   
-  // Natural ocean spawning: create 2-3 loose clusters (current convergences)
-  int numClusters = (int)random(2, 4);
+  // Natural ocean spawning: create 3-5 loose clusters with strong vertical distribution
+  int numClusters = (int)random(3, 6);  // More clusters for better spread
   ArrayList<PVector> clusterCenters = new ArrayList<PVector>();
   
   for (int c = 0; c < numClusters; c++) {
-    float cx = random(boundsInset + 100, width - boundsInset - 100);
-    float cy = random(boundsInset + 100, height - boundsInset - 100);
+    float cx = random(boundsInset + 80, width - boundsInset - 80);
+    // Force varied vertical positions - divide screen into bands
+    float verticalBand = (c % 3);  // 0, 1, or 2
+    float minY = boundsInset + (verticalBand * (height - 2*boundsInset) / 3);
+    float maxY = minY + (height - 2*boundsInset) / 3;
+    float cy = random(minY, maxY);
     clusterCenters.add(new PVector(cx, cy));
   }
   
@@ -625,21 +853,43 @@ void reiniciarGusanos() {
     int clusterIdx = (int)min(pow(random(1), 1.5) * numClusters, numClusters - 1);
     PVector center = clusterCenters.get(clusterIdx);
     
-    // Scatter around cluster center (exponential falloff)
-    float radius = randomGaussian() * 120 + 80; // cluster spread
+    // Large scatter radius with emphasis on vertical variation
+    float radiusX = randomGaussian() * 150 + 100; // Horizontal scatter
+    float radiusY = randomGaussian() * 200 + 150; // LARGER vertical scatter to prevent horizontal line
     float angle = random(TWO_PI);
-    float x = constrain(center.x + cos(angle) * radius, boundsInset, width - boundsInset);
-    float y = constrain(center.y + sin(angle) * radius, boundsInset, height - boundsInset);
+    float x = constrain(center.x + cos(angle) * radiusX, boundsInset, width - boundsInset);
+    float y = constrain(center.y + sin(angle) * radiusY, boundsInset, height - boundsInset);
 
     // Alternate color palettes
     color head = (i % 2 == 0) ? p1Head : p2Head;
     color tail = (i % 2 == 0) ? p1Tail : p2Tail;
     
-    // Create jellyfish with base personality
+    // Create jellyfish with base personƒality
     Gusano g = new Gusano(x, y, head, tail, i);
     
     // Mark spawn frame for grace period
     g.spawnFrame = frameCount;
+    
+    // Spawn with distributed life stages for ecosystem diversity
+    float stageRoll = random(1.0);
+    if (stageRoll < 0.25) {
+      // 25% ephyra (newborn)
+      g.lifeStage = LifeStage.EPHYRA;
+      g.ageSeconds = random(0, 55);  // 0-55 seconds
+    } else if (stageRoll < 0.55) {
+      // 30% juvenile (growing)
+      g.lifeStage = LifeStage.JUVENILE;
+      g.ageSeconds = random(60, 350);  // 60s-6min
+    } else if (stageRoll < 0.95) {
+      // 40% adult (mature)
+      g.lifeStage = LifeStage.ADULT;
+      g.ageSeconds = random(360, 1700);  // 6min-28min
+    } else {
+      // 5% senescent (aging)
+      g.lifeStage = LifeStage.SENESCENT;
+      g.ageSeconds = random(1800, 2400);  // 30min-40min
+    }
+    g.ageFrames = int(g.ageSeconds * 60.0);  // Convert to frames
     
     // Apply a personality preset with 30% variation for diversity
     GusanoPersonality personality = personalityPresets.getRandom(0.3);
@@ -742,4 +992,48 @@ void drawInteractionCursor() {
     ellipse(mouseX, mouseY, 25, 25);
   }
   popStyle();
+}
+
+// ===== BEHAVIOR PHASE SYSTEM (Interview Loop) =====
+// Tracks cycling through 3 interaction behaviors: gentle → scare → approach
+// Each behavior lasts 60 seconds (1 minute), repeating for 3-minute cohort lifetime
+
+int behaviorPhaseStartMs = 0;
+int currentBehaviorPhase = 0; // 0=gentle, 1=scare, 2=approach
+
+void initBehaviorPhases() {
+  behaviorPhaseStartMs = millis();
+  currentBehaviorPhase = 0;
+}
+
+void resetBehaviorPhase() {
+  behaviorPhaseStartMs = millis();
+  currentBehaviorPhase = 0;
+}
+
+int getCurrentBehaviorPhase() {
+  int elapsedMs = millis() - behaviorPhaseStartMs;
+  int phaseMs = 600000; // 600 seconds (10 minutes) per phase - 10x slower
+  currentBehaviorPhase = (elapsedMs / phaseMs) % 3;
+  return currentBehaviorPhase;
+}
+
+float getWaterStrengthForBehavior() {
+  int phase = getCurrentBehaviorPhase();
+  switch(phase) {
+    case 0: return 5.0;    // gentle = HIGHER ENERGY moderate ripples (was 3.0)
+    case 1: return 10.0;   // scare = VERY INTENSE ripples (was 7.0)
+    case 2: return 7.0;    // approach = STRONGER ripples (was 4.5)
+    default: return 5.0;
+  }
+}
+
+int getWaveFrequencyForBehavior() {
+  int phase = getCurrentBehaviorPhase();
+  switch(phase) {
+    case 0: return 30;     // gentle = waves every 30 frames (~2/sec)
+    case 1: return 20;     // scare = waves every 20 frames (~3/sec)
+    case 2: return 25;     // approach = waves every 25 frames (~2.4/sec)
+    default: return 30;
+  }
 }

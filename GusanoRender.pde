@@ -73,9 +73,14 @@ class GusanoRender {
     float depthScale = lerp(0.65, 1.15, depthNow);
     float depthAlpha = lerp(0.55, 1.0, depthNow);
 
-    // ENHANCED: Stronger bioluminescent glow based on arousal and personality
-    float bioGlow = 1.0 + g.arousal * 0.8 + max(0, g.userAttitude) * 0.6;
-    bioGlow *= lerp(0.85, 1.35, g.getGlowIntensity());
+    // DRAMATIC BIOLUMINESCENCE: Strong glow for arousal and curiosity
+    // Linear component: base contribution from state
+    float bioGlow = 1.0 + g.arousal * 1.4 + max(0, g.userAttitude) * 1.2;  // Increased from 0.8, 0.6
+    bioGlow *= lerp(0.85, 1.5, g.getGlowIntensity());  // Increased max from 1.35 to 1.5
+    
+    // Non-linear boost: excited jellyfish REALLY glow
+    float excitement = g.arousal + max(0, g.userAttitude * 0.5);
+    bioGlow *= (1.0 + excitement * excitement * 0.8);  // Squared for dramatic effect
 
     // Precompute once per draw call
     boolean isFire = (g.variant == 4);
@@ -93,11 +98,17 @@ class GusanoRender {
 
     // More gusanos => scale density down a bit for performance + ecosystem balance
     // Apply depth scale for 3D ocean effect
-    puntosMaxBase = int(puntosMaxBase * pointDensityMul * g.densityMul * depthScale * (g.shapeScale * g.shapeScale) / (0.60 * 0.60));
+    // Apply life stage scale modifier (ephyra are small, adults full-size)
+    float effectiveScale = g.shapeScale * g.stageScaleMul;
+    puntosMaxBase = int(puntosMaxBase * pointDensityMul * g.densityMul * depthScale * (effectiveScale * effectiveScale) / (0.60 * 0.60));
 
     // Fade-in to prevent initial oversaturation (ADD blend + collapsed geometry)
-    float fade = constrain(g.ageFrames / 45.0, 0, 1);
+    // Extended to 75 frames (~1.25s) for gentler appearance
+    float fade = constrain(g.ageFrames / 75.0, 0, 1);
     fade = fade * fade * (3.0 - 2.0 * fade); // smoothstep
+    
+    // Apply death/rebirth and spawn fade multipliers
+    fade *= g.deathFade * g.spawnEaseNow;
 
     int puntosMax = max(80, int(puntosMaxBase * fade));
 
@@ -105,10 +116,41 @@ class GusanoRender {
       float x_param = i % 200;
       float y_param = i / 43.0;
 
-      float k = 5 * cos(x_param / 14) * cos(y_param / 30);
-      float e = y_param / 8 - 13;
-      float d = (k*k + e*e) / 59.0 + 4.0;
-      float py = d * 45;
+      // Calculate py for color gradient using variant-specific equation
+      float k, e, d, py;
+      switch(g.variant) {
+        case 0:
+          k = 3.5 * cos(x_param / 14) * cos(y_param / 30);
+          e = y_param / 8 - 9;  // Reduced offset for larger head proportion
+          d = (k*k + e*e) / 59.0 + 4.0;
+          py = d * 52;
+          break;
+        case 1:
+          k = 4.2 * cos(x_param / 12) * cos(y_param / 25);
+          e = y_param / 7 - 11;  // Reduced offset for larger head proportion
+          d = (k*k + e*e) / 50.0 + 3.0;
+          py = d * 48;
+          break;
+        case 2:
+          k = 3.0 * cos(x_param / 16) * cos(y_param / 35);
+          e = y_param / 9 - 8;  // Reduced offset for larger head proportion
+          d = (k*k + e*e) / 65.0 + 5.0;
+          py = d * 56;
+          break;
+        case 3:
+          k = 5.0 * cos(x_param / 10) * cos(y_param / 20);
+          e = y_param / 6 - 12;  // Reduced offset for larger head proportion
+          d = (k*k + e*e) / 45.0 + 2.0;
+          py = d * 44;
+          break;
+        case 4:
+        default:
+          k = 5 * cos(x_param / 14) * cos(y_param / 30);
+          e = y_param / 8 - 13;
+          d = (k*k + e*e) / 59.0 + 4.0;
+          py = d * 45;
+          break;
+      }
 
       float minPY = 100;
       float maxPY = 400;
@@ -125,9 +167,9 @@ class GusanoRender {
         cPoint = lerpColor(g.colorCabeza, g.colorCola, verticalProgression);
       }
 
-      // ENHANCED: Apply stronger bioluminescent alpha with bioGlow multiplier
-      float baseAlpha = 120;
-      float enhancedAlpha = baseAlpha * fade * gusanosAlpha * depthAlpha * bioGlow;
+      // DRAMATIC GLOW: Higher base alpha + boost when excited
+      float baseAlpha = 120 + (bioGlow - 1.0) * 25;  // Add 25 per glow unit above base
+      float enhancedAlpha = baseAlpha * fade * gusanosAlpha * depthAlpha * bioGlow * g.deathFade * g.spawnEaseNow;
       stroke(cPoint, enhancedAlpha);
 
       // Map points only onto the currently active body
@@ -172,56 +214,65 @@ class GusanoRender {
         yIn = i / 235.0;
       }
 
-      dibujarPuntoForma(xIn, yIn, x, y);
+      dibujarPuntoForma(xIn, yIn, x, y, i);
     }
 
-    // ENHANCED: Brighter head glow with pulsing effect
+    // DRAMATIC HEAD GLOW: Brightest part of jellyfish, pulses strongly when aroused
     float life01 = constrain(g.vida / g.vidaMax, 0, 1);
-    float headPulse = 1.0 + sin(g.phase) * 0.3; // pulsing intensity
-    float headAlpha = (140 + 120 * life01) * fade * bioGlow * headPulse;
+    float headPulse = 1.0 + sin(g.phase) * (0.3 + g.arousal * 0.5);  // Stronger pulse when aroused
+    float headGlow = bioGlow * (1.0 + g.arousal * 0.8);  // Extra boost for head
+    float headAlpha = (160 + 160 * life01) * fade * headGlow * headPulse * g.deathFade * g.spawnEaseNow;  // Increased base from 140+120
     stroke(g.colorCabeza, headAlpha);
-    strokeWeight(max(1, 5 * g.shapeScale)); // slightly larger head marker
+    
+    // Subtle head marker that grows when excited (scaled by life stage)
+    float headEffectiveScale = g.shapeScale * g.stageScaleMul;
+    float headSize = 7 * headEffectiveScale * (1.0 + g.arousal * 0.2);  // Base 3, scaled by stage
+    strokeWeight(max(1, headSize));
     point(g.segmentos.get(0).x, g.segmentos.get(0).y);
     strokeWeight(1);
   }
 
-  void dibujarPuntoForma(float x, float y, float cx, float cy) {
+  void dibujarPuntoForma(float x, float y, float cx, float cy, int pointIndex) {
     float k, e, d, q, px, py;
     float headOffset = 184; // may be overridden per-shape
 
     switch(g.variant) {
     case 0:
       k = 3.5 * cos(x / 14) * cos(y / 30);  // Reduced amplitude for narrower shape
-      e = y / 8 - 13;
+      e = y / 8 - 9;  // Reduced offset for larger head proportion
       d = (k*k + e*e) / 59.0 + 4.0;
-      q = - 1.5 * sin(atan2(k, e) * e) + k * (3 + 4 / d * sin(d * d - t * 2));  // Less horizontal sway
+      q = - 1.5 * sin(atan2(k, e) * e) + k * (3 + 4 / d * sin(d * d - g.animTime * 2));  // Use local animTime
       px = q + 0.6;  // Reduced horizontal offset
       py = d * 52;  // Increased vertical stretch
       break;
 
     case 1:
       k = 4.2 * cos(x / 12) * cos(y / 25);  // Reduced amplitude
-      e = y / 7 - 15;
+      e = y / 7 - 11;  // Reduced offset for larger head proportion
       d = (k*k + e*e) / 50.0 + 3.0;
-      q = - 1.2 * sin(atan2(k, e) * e) + k * (2 + 5 / d * sin(d * d - t * 1.5));  // Less horizontal sway
+      q = - 1.2 * sin(atan2(k, e) * e) + k * (2 + 5 / d * sin(d * d - g.animTime * 1.5));  // Use local animTime
       px = q + 0.8;  // Reduced horizontal offset
-      py = d * 48;  // Increased vertical stretch
+      // Add vertical swimming motion: inspired by c = d - t/18 + i%3*4, then 80*sin(c-d)
+      float verticalOsc1 = g.verticalSwimAmp * sin(-g.animTime / g.verticalSwimPhaseDiv + (pointIndex % 3) * 4);
+      py = d * 48 + verticalOsc1;  // Base vertical stretch + oscillation
       break;
 
     case 2:
       k = 3.0 * cos(x / 16) * cos(y / 35);  // Reduced amplitude for compact shape
-      e = y / 9 - 11;
+      e = y / 9 - 8;  // Reduced offset for larger head proportion
       d = (k*k + e*e) / 65.0 + 5.0;
-      q = - 2.0 * sin(atan2(k, e) * e) + k * (4 + 3 / d * sin(d * d - t * 2.5));  // Less horizontal sway
+      q = - 2.0 * sin(atan2(k, e) * e) + k * (4 + 3 / d * sin(d * d - g.animTime * 2.5));  // Use local animTime
       px = q + 0.4;  // Reduced horizontal offset
-      py = d * 56;  // Increased vertical stretch
+      // Add vertical swimming motion with phase offset from i%3 pattern
+      float verticalOsc2 = g.verticalSwimAmp * sin(-g.animTime / g.verticalSwimPhaseDiv + (pointIndex % 3) * 4);
+      py = d * 56 + verticalOsc2;  // Base vertical stretch + oscillation
       break;
 
     case 3:
       k = 5.0 * cos(x / 10) * cos(y / 20);  // Reduced amplitude from very wide spread
-      e = y / 6 - 17;
+      e = y / 6 - 12;  // Reduced offset for larger head proportion
       d = (k*k + e*e) / 45.0 + 2.0;
-      q = - 2.5 * sin(atan2(k, e) * e) + k * (5 + 6 / d * sin(d * d - t * 3));  // Less horizontal sway
+      q = - 2.5 * sin(atan2(k, e) * e) + k * (5 + 6 / d * sin(d * d - g.animTime * 3));  // Use local animTime
       px = q + 1.0;  // Reduced horizontal offset
       py = d * 44;  // Increased vertical stretch
       break;
@@ -229,7 +280,10 @@ class GusanoRender {
     case 4:
       {
         // Digital organism (ported from the Processing web/p5 snippet)
-        float k0 = (4.0 + sin(y * 2.0 - t) * 3.0) * cos(x / 29.0);
+        // Uses local animTime for independent pause control
+        float tLocal = g.animTime;
+        
+        float k0 = (4.0 + sin(y * 2.0 - tLocal) * 3.0) * cos(x / 29.0);
         float e0 = y / 8.0 - 13.0;
         float d0 = mag(k0, e0);
 
@@ -238,9 +292,9 @@ class GusanoRender {
 
         float q0 = 3.0 * sin(k0 * 2.0)
           + 0.3 / kk
-          + sin(y / 25.0) * k0 * (9.0 + 4.0 * sin(e0 * 9.0 - d0 * 3.0 + t * 2.0));
+          + sin(y / 25.0) * k0 * (9.0 + 4.0 * sin(e0 * 9.0 - d0 * 3.0 + tLocal * 2.0));
 
-        float c0 = d0 - t;
+        float c0 = d0 - tLocal;
 
         // Place around (cx, cy) like the other variants
         px = q0 + 30.0 * cos(c0);
@@ -273,7 +327,8 @@ class GusanoRender {
       break;
     }
 
-    float s = g.shapeScale;
+    // Apply life stage scale modifier
+    float s = g.shapeScale * g.stageScaleMul;
     point(px * s + cx, (py - headOffset) * s + cy);
   }
 }

@@ -21,7 +21,7 @@ class Segmento {
   }
 
   void seguir(float targetX, float targetY, float speed) {
-    // ===== TEST MODE: No segment movement =====
+    // ===== DEBUGGING: Segment following disabled =====
     /*
     // Track previous position for motion-based coupling
     prevX = x;
@@ -41,11 +41,11 @@ class Segmento {
     x += cos(angulo) * fuerza;
     y += sin(angulo) * fuerza;
     */
-    // ===========================================
+    // ==============================================
   }
 
   void actualizar() {
-    // ===== TEST MODE: No bounds enforcement (segments stay put) =====
+    // ===== DEBUGGING: Bounds enforcement disabled =====
     /*
     // Larger margins so the *drawn* jellyfish (not just its segment points) stays on-screen.
     // Tune these if your shape constants change.
@@ -57,6 +57,6 @@ class Segmento {
     prevX = constrain(prevX, boundsInset, width - boundsInset);
     prevY = constrain(prevY, boundsInset, height - boundsInset);
     */
-    // ================================================================
+    // ==================================================
   }
 }
