@@ -51,10 +51,41 @@ class GusanoBehavior {
   // Hysteresis for mode switching - prevents rapid flip-flopping
   float modeHysteresis = 0.15;  // buffer zone around threshold
   boolean wasInUserMode = false; // track previous state
+  
+  // Reusable PVector objects to avoid allocation every frame (performance)
+  PVector sep = new PVector(0, 0);
+  PVector ali = new PVector(0, 0);
+  PVector coh = new PVector(0, 0);
+  PVector social = new PVector(0, 0);
 
   void actualizar() {
     // ===== TEST MODE: All behavior disabled for shape verification =====
     /*
+    // ------------------------------------------------------------
+    // Rest/Active Cycle Management
+    // ------------------------------------------------------------
+    // Check if it's time to switch states
+    if (frameCount >= g.nextCycleChangeFrame) {
+      g.scheduleNextCycle();
+    }
+    
+    // Calculate rest multiplier (smooth transitions)
+    float cycleProgress = float(frameCount - g.restCycleStart) / float(g.restCycleDuration);
+    float restMul = 1.0;
+    if (g.isResting) {
+      // Ease into rest at start, ease out at end
+      float easeWindow = 0.15; // 15% of cycle for easing
+      if (cycleProgress < easeWindow) {
+        float t = cycleProgress / easeWindow;
+        restMul = lerp(1.0, g.restMovementMul, t);
+      } else if (cycleProgress > (1.0 - easeWindow)) {
+        float t = (cycleProgress - (1.0 - easeWindow)) / easeWindow;
+        restMul = lerp(g.restMovementMul, 1.0, t);
+      } else {
+        restMul = g.restMovementMul;
+      }
+    }
+    
     // --- Spawn easing: reduce harsh initial motion after spawn/respawn ---
     // 0..1 ramp over first ~60 frames
     float spawnEase = constrain(g.ageFrames / 60.0, 0, 1);
@@ -197,13 +228,18 @@ class GusanoBehavior {
     // Ease the effective target during first frames
     float tgtX = lerp(cabeza.x, objetivoConFluidoX, spawnEase);
     float tgtY = lerp(cabeza.y, objetivoConFluidoY, spawnEase);
-    cabeza.seguir(tgtX, tgtY + velocidad * g.speedMul);
+    cabeza.seguir(tgtX, tgtY + velocidad * g.speedMul * restMul); // Apply rest multiplier to movement
 
     // ------------------------------------------------------------
-    // Pulse oscillator
+    // Pulse oscillator (continues during rest but with modified parameters)
     // ------------------------------------------------------------
     float modeBoost = lerp(0.90, 1.15, g.userMode);  // Reduced range for steadier rhythm
-    float freq = g.baseFreq * lerp(0.90, 1.40, g.arousal) * modeBoost;  // Less dramatic arousal effect
+    
+    // During rest: slower, calmer pulse (animation continues)
+    float arousalMod = g.isResting ? g.arousal * 0.35 : g.arousal; // Reduce arousal effect during rest
+    float freq = g.baseFreq * lerp(0.90, 1.40, arousalMod) * modeBoost;
+    if (g.isResting) freq *= 0.65; // Slower pulse frequency when resting
+    
     g.phase += freq;
     if (g.phase > TWO_PI) g.phase -= TWO_PI;
 
@@ -213,8 +249,9 @@ class GusanoBehavior {
     g.pulseNow = pulse;
     g.relaxNow = relax;
 
-    // Burst push during contraction
-    float burst = pulse * g.pulseAmp * lerp(0.85, 1.25, g.arousal) * lerp(0.95, 1.20, g.userMode) * spawnEase;  // Gentler bursts
+    // Burst push during contraction (reduced during rest)
+    float burstMul = g.isResting ? 0.25 : 1.0; // Gentler bursts when resting
+    float burst = pulse * g.pulseAmp * lerp(0.85, 1.25, g.arousal) * lerp(0.95, 1.20, g.userMode) * spawnEase * burstMul;
     cabeza.x += cos(cabeza.angulo) * burst;
     cabeza.y += sin(cabeza.angulo) * burst;
 
@@ -398,7 +435,7 @@ class GusanoBehavior {
       }
     }
 
-    PVector social = new PVector(0, 0);
+    social.set(0, 0);
 
     float wSep = 1.35 * lerp(1.18, 0.92, relax) * lerp(1.00, 1.18, g.userMode);
     float wAli = 0.55 * lerp(0.85, 1.35, relax) * lerp(1.25, 0.62, g.userMode);

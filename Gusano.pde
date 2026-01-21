@@ -51,6 +51,14 @@ class Gusano {
   float wUser = 0.75;
   float wSocial = 0.55;
 
+  // --- Rest/Active cycle (organic behavior) ---
+  boolean isResting = false;           // current state: resting or active
+  int restCycleStart = 0;              // frame when current cycle started
+  int restCycleDuration = 0;           // total duration of current cycle
+  int nextCycleChangeFrame = 0;        // when to switch states
+  float restMovementMul = 0.12;        // movement speed during rest (12%)
+  float restProbability = 0.30;        // 30% chance next cycle is rest
+
 
   // --- Rhythm switching (user-dominant vs social-dominant) ---
   float userMode = 0;        // 0..1 (0 = schooling, 1 = interactive)
@@ -183,13 +191,14 @@ class Gusano {
       longitudSegmento = 10;   // Tighter segments
     } else {
       tentacleWaveAmp = random(1.8, 3.5);  // Original expressive motion
+      tentacleWaveFreq = random(0.012, 0.024);  // MUCH slower tentacle waves for variant 4
     }
     tentacleLagMul = random(0.85, 1.15);
 
     // Make the special one a bit smaller and a tad more "nervous"
     if (variant == 4) {
       shapeScale = random(0.44, 0.60);
-      speedMul   = random(0.92, 1.20);
+      speedMul   = random(0.25, 0.45);  // Much slower movement speed
       wanderMul  = random(0.90, 1.25);
       socialMul  = random(0.85, 1.20);
       densityMul = random(0.85, 1.10);
@@ -245,6 +254,11 @@ class Gusano {
     // User attitude init
     userAttitude = random(-1, 1);
     userAttTarget = userAttitude;
+    
+    // Rest cycle init - start with active state
+    isResting = false;
+    restCycleStart = frameCount;
+    scheduleNextCycle();
     
     // Set spawn frame for grace period
     spawnFrame = frameCount;
@@ -415,6 +429,22 @@ class Gusano {
       s.prevX = px;
       s.prevY = py;
     }
+  }
+  
+  // Schedule next rest/active cycle with organic timing variation
+  void scheduleNextCycle() {
+    // Decide if next cycle is rest or active based on probability
+    boolean nextIsRest = random(1) < restProbability;
+    
+    // Duration varies: rest = 90-180 frames (3-6 sec), active = 180-420 frames (6-14 sec)
+    if (nextIsRest) {
+      restCycleDuration = int(random(90, 180));
+    } else {
+      restCycleDuration = int(random(180, 420));
+    }
+    
+    nextCycleChangeFrame = frameCount + restCycleDuration;
+    isResting = nextIsRest;
   }
   // ------------------------------------------------------------
   // Soft wall repulsion using the same margins as Segmento.actualizar()

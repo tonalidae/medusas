@@ -229,7 +229,7 @@ class GusanoRender {
     case 4:
       {
         // Digital organism (ported from the Processing web/p5 snippet)
-        float k0 = (4.0 + sin(y * 2.0 - t) * 3.0) * cos(x / 29.0);
+        float k0 = (4.0 + sin(y * 2.0 - t * 0.3) * 3.0) * cos(x / 29.0);
         float e0 = y / 8.0 - 13.0;
         float d0 = mag(k0, e0);
 
@@ -238,9 +238,9 @@ class GusanoRender {
 
         float q0 = 3.0 * sin(k0 * 2.0)
           + 0.3 / kk
-          + sin(y / 25.0) * k0 * (9.0 + 4.0 * sin(e0 * 9.0 - d0 * 3.0 + t * 2.0));
+          + sin(y / 25.0) * k0 * (9.0 + 4.0 * sin(e0 * 9.0 - d0 * 3.0 + t * 0.5));
 
-        float c0 = d0 - t;
+        float c0 = d0 - t * 0.3;
 
         // Place around (cx, cy) like the other variants
         px = q0 + 30.0 * cos(c0);

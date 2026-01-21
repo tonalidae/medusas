@@ -26,9 +26,9 @@ class SimulationParams {
   int mouseHistorySize = 8;         // Samples for smoothness calculation
   
   // ========== POPULATION ==========
-  int defaultPopulation = 12;       // Starting number of jellyfish
+  int defaultPopulation = 42;       // Starting number of jellyfish
   int minPopulation = 1;            // Minimum allowed
-  int maxPopulation = 24;           // Maximum allowed
+  int maxPopulation = 70;           // Maximum allowed
   
   // ========== RENDERING ==========
   float depthBobFreqMin = 0.015;    // Slowest depth oscillation

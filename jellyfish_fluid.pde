@@ -4,15 +4,6 @@
 // - setup(), draw(), mouse handlers
 // - utilities (reiniciarGusanos)
 //
-// IMPROVED BEHAVIOR SYSTEM:
-// 1. Personality presets - reduces parameter complexity
-// 2. Visual feedback - color tints show arousal/attitude/stress
-// 3. Hysteresis - prevents mode flip-flopping
-// 4. Gradual transitions - lonely mode and exit are smooth
-// 5. Spatial partitioning - O(N) instead of O(N²) neighbor queries
-// 6. Bravery system - group courage affects scare accumulation
-// 7. Escape choreography - jellyfish swim away before fading
-// ============================================================
 
 import java.util.HashMap;
 import java.util.HashSet;
@@ -22,7 +13,7 @@ Fluido fluido;  // Nuevo sistema de fluido
 SpatialGrid spatialGrid;  // Spatial partitioning for performance
 PersonalityPresets personalityPresets;  // Instance for personality system
 SimulationParams params;  // Centralized configuration
-int numGusanos = 12;
+int numGusanos = 42;
 int numSegmentos = 30;
 float velocidad = 2.1;  // 40% slower for much calmer movement
 float suavidad = 0.15;
@@ -79,7 +70,7 @@ final int mouseStillThresholdMs = 800; // hovering still = calming presence
 float scareProximityMul = 0.0;         // proximity-based threat multiplier
 
 // Mouse history for smoothness calculation
-ArrayList<PVector> mouseHistory = new ArrayList<PVector>();
+ArrayList<PVector> mouseHistory;
 final int mouseHistorySize = 8;
 
 // Performance: cached values for debug overlay
@@ -124,6 +115,7 @@ void setup() {
 
   // Start with empty array - jellyfish spawn after first interaction
   gusanos = new ArrayList<Gusano>();
+  mouseHistory = new ArrayList<PVector>(mouseHistorySize);
   gusanosSpawned = false;
   spawnArmed = false;
   exitArmed = false;
@@ -367,14 +359,16 @@ void draw() {
   blendMode(ADD);
   
   // Update spatial grid for neighbor queries - only every other frame
-  if (gusanosSpawned && frameCount % 2 == 0) {
+  int gusanosSize = gusanos.size();
+  if (gusanosSpawned && gusanosSize > 0 && frameCount % 2 == 0) {
     spatialGrid.clear();
-    for (Gusano g : gusanos) {
-      spatialGrid.insert(g);
+    for (int i = 0; i < gusanosSize; i++) {
+      spatialGrid.insert(gusanos.get(i));
     }
   }
   
-  for (Gusano gusano : gusanos) {
+  for (int i = 0; i < gusanosSize; i++) {
+    Gusano gusano = gusanos.get(i);
     gusano.actualizar();
     gusano.dibujarForma();
   }
@@ -612,7 +606,9 @@ void reiniciarGusanos() {
   
   // Natural ocean spawning: create 2-3 loose clusters (current convergences)
   int numClusters = (int)random(2, 4);
-  ArrayList<PVector> clusterCenters = new ArrayList<PVector>();
+  
+  // Reuse array to avoid allocation
+  ArrayList<PVector> clusterCenters = new ArrayList<PVector>(numClusters);
   
   for (int c = 0; c < numClusters; c++) {
     float cx = random(boundsInset + 100, width - boundsInset - 100);
@@ -656,7 +652,9 @@ boolean scareNearGate(float mx, float my) {
   float threatR = 120; // reduced from 220
   float threat2 = threatR * threatR;
   
-  for (Gusano g : gusanos) {
+  int gusanosSize = gusanos.size();
+  for (int i = 0; i < gusanosSize; i++) {
+    Gusano g = gusanos.get(i);
     if (g.segmentos == null || g.segmentos.size() == 0) continue;
     Segmento head = g.segmentos.get(0);
     float dx = mx - head.x;
@@ -692,10 +690,11 @@ boolean scareNearGate(float mx, float my) {
 float calculateDragSmoothness() {
   // Only update when dragging for better performance
   if (mousePressed) {
-    mouseHistory.add(new PVector(mouseX, mouseY));
-    if (mouseHistory.size() > mouseHistorySize) {
+    // Limit size to prevent memory leak
+    if (mouseHistory.size() >= mouseHistorySize) {
       mouseHistory.remove(0);
     }
+    mouseHistory.add(new PVector(mouseX, mouseY));
   }
   
   if (mouseHistory.size() < 3) return 1.0; // not enough data = assume smooth
