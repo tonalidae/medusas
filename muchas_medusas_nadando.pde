@@ -1,268 +1,182 @@
 ArrayList<Gusano> gusanos;
-int numGusanos = 6;
+int numGusanos = 7;
 int numSegmentos = 30;
 
 float timeScale = 0.001;
 float t = 0;
+boolean debugSteering = false;
+boolean debugWake = false;
+boolean debugFlow = false;
+boolean debugObjetivos = true;
+boolean debugStateChanges = false;
+boolean debugFlowMean = false;
+boolean debugNeighborStats = false;
+boolean debugMoodStats = false;
+boolean debugSteeringNeighbors = false;
+boolean debugHelp = true;
+boolean showHead = false;
+boolean debugJellyMotion = false;
+boolean debugJumps = false;
+boolean AUTO_HEAL_NANS = false;
+boolean debugCycles = false;
+boolean debugBiologicalVectors = false;
+
+// --- Jelly motion tuning (minimal, reversible knobs) ---
+// Tuning notes:
+// UNDULATION_MAX: overall lateral drift amount; lower = less snake-wiggle.
+// UNDULATION_SPEED_EXP: higher exponent keeps drift at low speed, fades later at high speed.
+// GLIDE_STEER_SCALE: wander/sway multiplier during glide; lower = calmer coast.
+// GLIDE_HEAD_NOISE_SCALE: head turbulence during glide; lower = steadier bell lead.
+// GLIDE_BODY_TURB_SCALE: body turbulence during glide; lower = less body shimmer.
+// FOLLOW_CONTRACTION_BOOST / FOLLOW_GLIDE_REDUCE: body pull-in vs lag through pulse.
+float UNDULATION_MAX = 0.15;
+float UNDULATION_SPEED_EXP = 2.0;
+float GLIDE_STEER_SCALE = 0.25;
+float GLIDE_HEAD_NOISE_SCALE = 0.4;
+float GLIDE_BODY_TURB_SCALE = 0.55;
+float FOLLOW_CONTRACTION_BOOST = 1.15;
+float FOLLOW_GLIDE_REDUCE = 0.7;
+float CYCLE_EMA_ALPHA = 0.2; // Rolling average smoothing for cycle debug
+float STEER_SMOOTH_ALPHA = 0.18; // Lower = smoother turns, higher = snappier
+float STEER_FLIP_DOT = -0.2; // If desired steer points opposite, damp the flip
+float STEER_FLIP_SLOW = 0.15; // Extra damping factor on flips
+float MAX_TURN_RAD = 0.25; // Max turn per frame (~14 deg)
+
+boolean LOCK_MOOD_TO_PERSONALITY = true;
+
+// --- Stability tuning (multi-agent robustness) ---
+int ATTN_MIN = 2;
+int ATTN_MAX = 6;
+float ATTN_FACTOR = 0.25;
+int COHESION_HYST_MS = 300;
+
+float MAX_STEER_MOUSE = 6.0;
+float MAX_STEER_WALL = 6.0;
+float MAX_STEER_SEP = 4.0;
+float MAX_STEER_COH = 2.0;
+float MAX_STEER_WANDER = 1.8;
+float MAX_STEER_SWAY = 1.2;
+float MAX_STEER_AGGRO = 8.0;
+float MAX_TOTAL_STEER = 8.0;
+
+int POST_CLAMP_CALM_MS = 450;
+float POST_CLAMP_STEER_SCALE = 0.4;
+
+float JUMP_STEP_THR = 80;
+float SEG_SNAP_THR = 80;
+
+// --- Mood stabilization toggles (A/B) ---
+boolean STABILIZE_MOOD = true;
+boolean DEBUG_MOOD = true;
+
+// --- Mood stabilization config (conservative defaults) ---
+int MOOD_COOLDOWN_FRAMES = 30;   // ~0.5s at 60fps
+int MOOD_DWELL_FRAMES = 10;      // condition must persist
+float MOOD_EMA_ALPHA = 0.08;     // smoothing for noisy inputs
+float AGG_ENTER_THR = 0.6;
+float AGG_EXIT_THR = 0.4;
+float SHY_ENTER_THR = 0.6;
+float SHY_EXIT_THR = 0.4;
+float MOOD_PROX_RADIUS = 180;
+
+boolean useWander = true;
+boolean useWallAvoid = true;
+boolean useWake = true;
+boolean useFlow = true;
+boolean useSeparation = true;
+boolean useCohesion = true;
+boolean usePursuit = true;
+
+float lastMouseX = 0;
+float lastMouseY = 0;
+float mouseSpeed = 0;
+
+float followThreshold = 80;
+int lastNeighborStatsLogMs = 0;
+int lastMoodStatsLogMs = 0;
+int lastMoodStatsTotal = 0;
+int lastMoodSummaryFrame = 0;
+
+// --- Render-safe clamp margins (keep full body on screen) ---
+float clampMarginX = 120;
+float clampMarginTop = 80;
+float clampMarginBottom = 260;
+
+// --- Spatial hash grid (local interactions: Rain World vibe) ---
+HashMap<Long, ArrayList<Gusano>> spatialGrid = new HashMap<Long, ArrayList<Gusano>>();
+// Cell size should be >= max interaction radius (cohesion/pursuit). Adjust as needed.
+float gridCellSize = 260;
 
 void setup() {
   size(1280, 800);
-  stroke(0, 66); 
-  background(255); 
+  stroke(0, 66);
+  background(255);
+
+  initWakeGrid();
 
   gusanos = new ArrayList<Gusano>();
 
   for (int i = 0; i < numGusanos; i++) {
     float x = random(200, width-200);
     float y = random(200, height-200);
-    color c = color(0, 66); 
-    gusanos.add(new Gusano(x, y, c, i)); 
+    color c = color(0, 66);
+    gusanos.add(new Gusano(x, y, c, i));
   }
 }
 
 void draw() {
-  background(255); 
+  background(255);
   t = millis() * timeScale;
+
+  mouseSpeed = dist(mouseX, mouseY, lastMouseX, lastMouseY);
+  lastMouseX = mouseX;
+  lastMouseY = mouseY;
+
+  updateWakeGrid();
+  rebuildSpatialGrid();
+  if (mousePressed || mouseSpeed > 12) {
+    depositWakeBlob(mouseX, mouseY, 70, userDeposit);
+  }
+  if (debugWake) {
+    drawWakeGrid();
+  }
 
   for (Gusano gusano : gusanos) {
     gusano.actualizar();
     gusano.dibujarForma();
   }
-}
 
-class Gusano {
-  ArrayList<Segmento> segmentos;
-  color colorGusano;
-  float objetivoX, objetivoY;
-  float cambioObjetivo;
-  float frecuenciaCambio;
-  int id; 
-  float noiseOffset; 
-  
-  // NEW: Current angle of the head (for smooth turning)
-  float headAngle = 0; 
-
-  Gusano(float x, float y, color c, int id_) {
-    segmentos = new ArrayList<Segmento>();
-    colorGusano = c;
-    id = id_;
-    noiseOffset = random(1000); 
-
-    for (int i = 0; i < numSegmentos; i++) {
-      segmentos.add(new Segmento(x, y));
-    }
-
-    objetivoX = random(100, width-100);
-    objetivoY = random(100, height-100);
-    cambioObjetivo = 0;
-    
-    // FIX 1: Longer decision times (Graceful arcs)
-    frecuenciaCambio = random(200, 400); 
+  if (debugSteering) {
+    drawAverageVelocity();
   }
 
-  void actualizar() {
-    float headPulse = sin(t + id * TWO_PI/numGusanos);
-    // Slight speed boost for head to simulate "pulling"
-    float headSpeed = map(headPulse, -1, 1, 6.5, 2.0); 
-
-    cambioObjetivo++;
-    Segmento cabeza = segmentos.get(0);
-    float distanciaAlObjetivo = dist(cabeza.x, cabeza.y, objetivoX, objetivoY);
-
-    if (cambioObjetivo > frecuenciaCambio || distanciaAlObjetivo < 40) {
-      nuevoObjetivo();
-      cambioObjetivo = 0;
-    }
-
-    // FIX 2: WALL REPULSION (Steering away from walls instead of hitting them)
-    float margin = 100;
-    if (cabeza.x < margin) objetivoX += 5;
-    if (cabeza.x > width - margin) objetivoX -= 5;
-    if (cabeza.y < margin) objetivoY += 5;
-    if (cabeza.y > height - margin) objetivoY -= 5;
-
-    // Head Turbulence
-    float headTurbulenceX = map(noise(t * 0.5, 0, noiseOffset), 0, 1, -1.5, 1.5);
-    float headTurbulenceY = map(noise(t * 0.5, 100, noiseOffset), 0, 1, -1.5, 1.5);
-
-    // FIX 3: INERTIA / SMOOTH TURNING
-    // Instead of calling cabeza.seguir() immediately, we calculate the desired angle
-    // and smoothly interpolate towards it.
-    float targetX = objetivoX + headTurbulenceX;
-    float targetY = objetivoY + headTurbulenceY;
-    
-    float dx = targetX - cabeza.x;
-    float dy = targetY - cabeza.y;
-    float desiredAngle = atan2(dy, dx);
-    
-    // Smoothly rotate headAngle towards desiredAngle (The "0.05" is the turning speed/weight)
-    // We use a custom lerpAngle function to handle the -PI to PI wrap-around
-    headAngle = lerpAngle(headAngle, desiredAngle, 0.05); 
-    
-    // Manual movement of head based on smooth angle
-    cabeza.angulo = headAngle;
-    cabeza.x += cos(headAngle) * headSpeed;
-    cabeza.y += sin(headAngle) * headSpeed;
-    cabeza.actualizar(); // Constrain logic
-
-    // Update Body
-    for (int i = 1; i < segmentos.size(); i++) {
-      Segmento seg = segmentos.get(i);
-      Segmento segAnterior = segmentos.get(i - 1);
-      
-      float waveDelay = i * 0.15; 
-      float bodyPulse = sin((t - waveDelay) + id * TWO_PI/numGusanos);
-      float bodySpeed = map(bodyPulse, -1, 1, 6, 2.0);
-      
-      float turbulenceX = map(noise(t * 0.5, i * 0.1, noiseOffset), 0, 1, -1.5, 1.5);
-      float turbulenceY = map(noise(t * 0.5, i * 0.1 + 100, noiseOffset), 0, 1, -1.5, 1.5);
-      
-      seg.seguir(segAnterior.x + turbulenceX, segAnterior.y + turbulenceY, bodySpeed);
-      seg.actualizar();
-    }
+  if (debugObjetivos) {
+    drawDebugObjectives();
   }
 
-  void nuevoObjetivo() {
-    Segmento cabeza = segmentos.get(0);
-    // Find a new point within a cone in front of the jellyfish (prevent 180 flips)
-    float currentHeading = atan2(objetivoY - cabeza.y, objetivoX - cabeza.x);
-    float turnAngle = random(-PI/2, PI/2); // Turn up to 90 degrees left or right
-    
-    float distance = random(200, 400); // Longer swim distances
+  if (debugFlowMean) {
+    debugMeasureFlowMean();
+  }
+  if (debugNeighborStats) {
+    debugNeighborStatsTick();
+  }
+  if (debugMoodStats) {
+    debugMoodStatsTick();
+  }
+  if (DEBUG_MOOD) {
+    debugMoodSummaryTick();
+  }
 
-    objetivoX = cabeza.x + cos(currentHeading + turnAngle) * distance;
-    objetivoY = cabeza.y + sin(currentHeading + turnAngle) * distance;
-    
-    // Keep target somewhat on screen
-    objetivoX = constrain(objetivoX, 100, width-100);
-    objetivoY = constrain(objetivoY, 100, height-100);
+  if (debugHelp) {
+    drawDebugHelp();
   }
   
-  // Helper for smooth rotation (handles the jump between PI and -PI)
-  float lerpAngle(float a, float b, float t) {
-    float diff = b - a;
-    if (diff > PI) diff -= TWO_PI;
-    if (diff < -PI) diff += TWO_PI;
-    return a + diff * t;
-  }
-
-  void dibujarForma() {
-    stroke(colorGusano);
-    float baseOffset = 120; // Adjusted per previous discussion
-
-    beginShape(POINTS);
-    for (int i = 5000; i > 0; i--) {
-      float x_param = i % 200;
-      float y_param = i / 35.0;
-
-      float k, e, d, q, px, py;
-
-      switch(id % 4) { // Safer modulo in case you have > 4 worms
-        case 0:
-          k = 5 * cos(x_param / 14) * cos(y_param / 30);
-          e = y_param / 8 - 13;
-          d = sq(mag(k, e)) / 59 + 4;
-          q = - 3 * sin(atan2(k, e) * e) + k * (3 + 4 / d * sin(d * d - t * 2));
-          py = d * 45;
-          break;
-        case 1:
-          k = 6 * cos((x_param*1.1) / 12) * cos((y_param*0.9) / 25);
-          e = (y_param*0.9) / 7 - 15;
-          d = sq(mag(k, e)) / 50 + 3;
-          q = - 2 * sin(atan2(k, e) * e) + k * (2 + 5 / d * sin(d * d - t * 1.5));
-          py = d * 40;
-          break;
-        case 2:
-          k = 4 * cos((x_param*0.9) / 16) * cos((y_param*1.1) / 35);
-          e = (y_param*1.1) / 9 - 11;
-          d = sq(mag(k, e)) / 65 + 5;
-          q = - 4 * sin(atan2(k, e) * e) + k * (4 + 3 / d * sin(d * d - t * 2.5));
-          py = d * 50;
-          break;
-        case 3:
-          k = 7 * cos((x_param*1.2) / 10) * cos((y_param*0.8) / 20);
-          e = (y_param*0.8) / 6 - 17;
-          d = sq(mag(k, e)) / 45 + 2;
-          q = - 5 * sin(atan2(k, e) * e) + k * (5 + 6 / d * sin(d * d - t * 3));
-          py = d * 35;
-          break;
-        default: // Fallback
-          k = 5 * cos(x_param / 14) * cos(y_param / 30);
-          e = y_param / 8 - 13;
-          d = sq(mag(k, e)) / 59 + 4;
-          q = - 3 * sin(atan2(k, e) * e) + k * (3 + 4 / d * sin(d * d - t * 2));
-          py = d * 45;
-          break;
-      }
-
-      float minPY = 100;
-      float maxPY = 400;
-      float verticalProgression = constrain(map(py, minPY, maxPY, 0, 1), 0, 1);
-      
-      float dragOffset = verticalProgression * 1.5; 
-      float localPulse = map(sin(t + id * TWO_PI/numGusanos - dragOffset), -1, 1, -10, 10);
-      float localBreath = map(localPulse, -10, 10, 0.7, 1.3);
-
-      px = q * localBreath;
-
-      int segmentIndex = int(verticalProgression * (segmentos.size() - 1));
-      Segmento seg = segmentos.get(segmentIndex);
-      float segmentProgression = (verticalProgression * (segmentos.size() - 1)) - segmentIndex;
-      float x, y;
-
-      if (segmentIndex < segmentos.size() - 1) {
-        Segmento nextSeg = segmentos.get(segmentIndex + 1);
-        x = lerp(seg.x, nextSeg.x, segmentProgression);
-        y = lerp(seg.y, nextSeg.y, segmentProgression);
-      } else {
-        x = seg.x;
-        y = seg.y;
-      }
-
-      vertex(px + x, py - (baseOffset + localPulse) + y);
-    }
-    endShape();
-
-    stroke(0, 200);
-    strokeWeight(4);
-    point(segmentos.get(0).x, segmentos.get(0).y);
-    strokeWeight(1);
+  if (debugBiologicalVectors) {
+    drawBiologicalVectorDebug();
   }
 }
 
-class Segmento {
-  float x, y;
-  float angulo;
-
-  Segmento(float x_, float y_) {
-    x = x_;
-    y = y_;
-    angulo = 0;
-  }
-
-  void seguir(float targetX, float targetY, float speed) {
-    float dx = targetX - x;
-    float dy = targetY - y;
-    angulo = atan2(dy, dx);
-
-    float distancia = dist(x, y, targetX, targetY);
-
-    float fuerza = speed;
-    if (distancia < 50) {
-      fuerza = map(distancia, 0, 50, speed * 0.3, speed);
-    }
-
-    x += cos(angulo) * fuerza;
-    y += sin(angulo) * fuerza;
-  }
-
-  void actualizar() {
-    x = constrain(x, 50, width - 50);
-    y = constrain(y, 50, height - 50);
-  }
-}
-
-// Controles para ajustar parámetros
+// Controles para ajustar parametros
 //void keyPressed() {
 //  if (key == '+' || key == '=') {
 //    numGusanos = min(8, numGusanos + 1);
@@ -276,6 +190,67 @@ class Segmento {
 //  }
 //}
 
+void keyPressed() {
+  if (key == 'o' || key == 'O') {
+    debugObjetivos = !debugObjetivos;
+  } else if (key == 'p' || key == 'P') {
+    debugStateChanges = !debugStateChanges;
+  } else if (key == 's' || key == 'S') {
+    debugSteering = !debugSteering;
+  } else if (key == 'm' || key == 'M') {
+    debugFlowMean = !debugFlowMean;
+  } else if (key == 'b' || key == 'B') {
+    debugNeighborStats = !debugNeighborStats;
+  } else if (key == 'u' || key == 'U') {
+    debugMoodStats = !debugMoodStats;
+  } else if (key == 'n' || key == 'N') {
+    debugSteeringNeighbors = !debugSteeringNeighbors;
+  } else if (key == 'd' || key == 'D') {
+    DEBUG_MOOD = !DEBUG_MOOD;
+  } else if (key == 'v' || key == 'V') {
+    STABILIZE_MOOD = !STABILIZE_MOOD;
+  } else if (key == 'h' || key == 'H') {
+    debugHelp = !debugHelp;
+  } else if (key == 'j' || key == 'J') {
+    debugJellyMotion = !debugJellyMotion;
+  } else if (key == 'c' || key == 'C') {
+    debugCycles = !debugCycles;
+    println("[DEBUG] debugCycles=" + debugCycles);
+  } else if (key == 'k' || key == 'K') {
+    LOCK_MOOD_TO_PERSONALITY = !LOCK_MOOD_TO_PERSONALITY;
+    println("[MOOD] LOCK_MOOD_TO_PERSONALITY=" + LOCK_MOOD_TO_PERSONALITY);
+  } else if (key == 'g' || key == 'G') {
+    debugJumps = !debugJumps;
+    println("[DEBUG] debugJumps=" + debugJumps);
+  } else if (key == 'x' || key == 'X') {
+    AUTO_HEAL_NANS = !AUTO_HEAL_NANS;
+    println("[DEBUG] AUTO_HEAL_NANS=" + AUTO_HEAL_NANS);
+  } else if (key == '+' || key == '=') {
+    numGusanos = min(32, numGusanos + 1);
+    reiniciarGusanos();
+  } else if (key == '-' || key == '_') {
+    numGusanos = max(1, numGusanos - 1);
+    reiniciarGusanos();
+  } else if (key == 'q' || key == 'Q') {
+    showHead = !showHead;
+  } else if (key == '1') {
+    useFlow = !useFlow;
+  } else if (key == '2') {
+    useWake = !useWake;
+  } else if (key == '3') {
+    useCohesion = !useCohesion;
+  } else if (key == '4') {
+    useSeparation = !useSeparation;
+  } else if (key == '5') {
+    useWander = !useWander;
+  } else if (key == '6') {
+    useWallAvoid = !useWallAvoid;
+  } else if (key == 'l' || key == 'L') {
+    debugBiologicalVectors = !debugBiologicalVectors;
+    println("[DEBUG] debugBiologicalVectors=" + debugBiologicalVectors);
+  }
+}
+
 void reiniciarGusanos() {
   gusanos.clear();
   for (int i = 0; i < numGusanos; i++) {
@@ -286,3 +261,419 @@ void reiniciarGusanos() {
   }
 }
 
+// --- Spatial grid helpers ---
+long cellKey(int cx, int cy) {
+  return (((long)cx) << 32) ^ (cy & 0xffffffffL);
+}
+
+void rebuildSpatialGrid() {
+  spatialGrid.clear();
+  if (gusanos == null) return;
+  for (Gusano g : gusanos) {
+    if (g == null || g.segmentos == null || g.segmentos.size() == 0) continue;
+    Segmento h = g.segmentos.get(0);
+    int cx = floor(h.x / gridCellSize);
+    int cy = floor(h.y / gridCellSize);
+    long key = cellKey(cx, cy);
+    ArrayList<Gusano> bucket = spatialGrid.get(key);
+    if (bucket == null) {
+      bucket = new ArrayList<Gusano>();
+      spatialGrid.put(key, bucket);
+    }
+    bucket.add(g);
+  }
+}
+
+ArrayList<Gusano> queryNeighbors(float x, float y) {
+  ArrayList<Gusano> out = new ArrayList<Gusano>();
+  int cx = floor(x / gridCellSize);
+  int cy = floor(y / gridCellSize);
+  for (int oy = -1; oy <= 1; oy++) {
+    for (int ox = -1; ox <= 1; ox++) {
+      long key = cellKey(cx + ox, cy + oy);
+      ArrayList<Gusano> bucket = spatialGrid.get(key);
+      if (bucket != null) out.addAll(bucket);
+    }
+  }
+  return out;
+}
+
+void drawDebugObjectives() {
+  pushStyle();
+  strokeWeight(1);
+  textSize(12);
+
+  for (Gusano g : gusanos) {
+    Segmento cabeza = g.segmentos.get(0);
+
+    float mouseSenseRadius = 350;
+    float neighborSenseRadius = 180;
+    float sepRadius = 55;
+
+    // Sensory radius (mouse influence)
+    noFill();
+    stroke(0, 40);
+    ellipse(cabeza.x, cabeza.y, mouseSenseRadius * 2, mouseSenseRadius * 2);
+
+    // Neighbor sensing range
+    stroke(0, 60);
+    ellipse(cabeza.x, cabeza.y, neighborSenseRadius * 2, neighborSenseRadius * 2);
+
+    // Tactile separation range
+    stroke(0, 90);
+    ellipse(cabeza.x, cabeza.y, sepRadius * 2, sepRadius * 2);
+
+    // Aggro lock (1-to-1)
+    if (g.state == Gusano.AGGRESSIVE && g.aggroTargetId >= 0) {
+      Gusano target = null;
+      for (Gusano other : gusanos) {
+        if (other != null && other.id == g.aggroTargetId) {
+          target = other;
+          break;
+        }
+      }
+      if (target != null && target.segmentos != null && target.segmentos.size() > 0) {
+        Segmento targetHead = target.segmentos.get(0);
+        stroke(0, 120);
+        line(cabeza.x, cabeza.y, targetHead.x, targetHead.y);
+        fill(0, 120);
+        float mx = (cabeza.x + targetHead.x) * 0.5;
+        float my = (cabeza.y + targetHead.y) * 0.5;
+        text(g.id + " -> " + target.id, mx + 4, my - 4);
+      }
+    }
+
+    // Label near head
+    fill(0, 160);
+    String persona = (g.personalityLabel != null) ? g.personalityLabel : g.stateLabel();
+    text(g.id + " " + persona, cabeza.x + 6, cabeza.y - 6);
+    if (millis() - g.lastFearTime < 1000) {
+      fill(0, 120);
+      text(g.lastFearReason, cabeza.x + 6, cabeza.y - 18);
+    }
+    if (debugJellyMotion) {
+      fill(0, 120);
+      text("c " + nf(g.debugContraction, 0, 2) + " glide " + nf(g.debugGlideScale, 0, 2),
+           cabeza.x + 6, cabeza.y + 12);
+      text("undu " + nf(g.debugUndulationGate, 0, 2) +
+           " steer " + nf(g.debugWanderScale, 0, 2),
+           cabeza.x + 6, cabeza.y + 24);
+      text("head " + nf(g.debugHeadGlideScale, 0, 2) +
+           " body " + nf(g.debugBodyGlideScale, 0, 2),
+           cabeza.x + 6, cabeza.y + 36);
+      text("hz " + nf(g.lastCycleHz, 0, 2) +
+           " dist " + nf(g.lastCycleDist, 0, 2) +
+           " spd " + nf(g.lastCycleSpeed, 0, 2),
+           cabeza.x + 6, cabeza.y + 48);
+      text("avgHz " + nf(g.avgCycleHz, 0, 2) +
+           " avgDist " + nf(g.avgCycleDist, 0, 2) +
+           " avgSpd " + nf(g.avgCycleSpeed, 0, 2),
+           cabeza.x + 6, cabeza.y + 60);
+    }
+
+    if (debugSteeringNeighbors) {
+      drawVecArrow(cabeza.x, cabeza.y, g.debugSteerMouse, 30, 140, "M");
+      drawVecArrow(cabeza.x, cabeza.y, g.debugSteerWall, 30, 140, "W");
+      drawVecArrow(cabeza.x, cabeza.y, g.debugSteerSep, 30, 160, "S");
+      drawVecArrow(cabeza.x, cabeza.y, g.debugSteerCoh, 30, 160, "C");
+      drawVecArrow(cabeza.x, cabeza.y, g.debugSteerWander, 30, 120, "R");
+      drawVecArrow(cabeza.x, cabeza.y, g.debugSteerSway, 30, 120, "Y");
+      drawVecArrow(cabeza.x, cabeza.y, g.debugSteerAggro, 30, 180, "A");
+    }
+  }
+
+  popStyle();
+}
+
+void drawAverageVelocity() {
+  if (gusanos == null || gusanos.size() == 0) return;
+  PVector avg = new PVector(0, 0);
+  for (Gusano g : gusanos) {
+    avg.add(g.vel);
+  }
+  avg.div(max(1, gusanos.size()));
+
+  float cx = width * 0.5;
+  float cy = height * 0.5;
+  float scale = 60;
+
+  pushStyle();
+  stroke(0, 120);
+  line(cx, cy, cx + avg.x * scale, cy + avg.y * scale);
+  noFill();
+  ellipse(cx, cy, 8, 8);
+  popStyle();
+}
+
+void debugNeighborStatsTick() {
+  if (gusanos == null || gusanos.size() == 0) return;
+  int now = millis();
+  if (now - lastNeighborStatsLogMs < 1000) return;
+  lastNeighborStatsLogMs = now;
+
+  int totalScanned = 0;
+  int maxScanned = 0;
+  int counted = 0;
+  for (Gusano g : gusanos) {
+    if (g == null || g.segmentos == null || g.segmentos.size() == 0) continue;
+    Segmento head = g.segmentos.get(0);
+    ArrayList<Gusano> neighbors = queryNeighbors(head.x, head.y);
+    int scanned = neighbors.size();
+    for (Gusano other : neighbors) {
+      if (other == g) {
+        scanned = max(0, scanned - 1);
+        break;
+      }
+    }
+    totalScanned += scanned;
+    if (scanned > maxScanned) maxScanned = scanned;
+    counted++;
+  }
+  if (counted == 0) return;
+  float avgScanned = totalScanned / (float)counted;
+  int globalScan = max(0, gusanos.size() - 1);
+  println("[NEIGH] avgScanned=" + nf(avgScanned, 0, 1) +
+          " maxScanned=" + maxScanned +
+          " global=" + globalScan +
+          " gridCellSize=" + nf(gridCellSize, 0, 0));
+}
+
+void debugMoodStatsTick() {
+  if (gusanos == null || gusanos.size() == 0) return;
+  int now = millis();
+  if (now - lastMoodStatsLogMs < 1000) return;
+
+  int changesTotal = 0;
+  int calmCount = 0;
+  int curiousCount = 0;
+  int shyCount = 0;
+  int fearCount = 0;
+  int aggressiveCount = 0;
+  for (Gusano g : gusanos) {
+    if (g == null) continue;
+    changesTotal += g.moodChangeCount;
+    switch (g.state) {
+      case Gusano.CALM:
+        calmCount++;
+        break;
+      case Gusano.CURIOUS:
+        curiousCount++;
+        break;
+      case Gusano.SHY:
+        shyCount++;
+        break;
+      case Gusano.FEAR:
+        fearCount++;
+        break;
+      case Gusano.AGGRESSIVE:
+        aggressiveCount++;
+        break;
+    }
+  }
+  float avgPer = changesTotal / (float)max(1, gusanos.size());
+  float perMin = -1;
+  if (lastMoodStatsLogMs > 0) {
+    float elapsedMin = (now - lastMoodStatsLogMs) / 60000.0;
+    if (elapsedMin > 0) {
+      int delta = changesTotal - lastMoodStatsTotal;
+      perMin = delta / elapsedMin;
+    }
+  }
+  String line = "[MOOD] changesTotal=" + changesTotal +
+                " avgPer=" + nf(avgPer, 0, 1) +
+                " states: CALM=" + calmCount +
+                " CUR=" + curiousCount +
+                " SHY=" + shyCount +
+                " FEAR=" + fearCount +
+                " AGG=" + aggressiveCount;
+  if (perMin >= 0) {
+    line += " perMin=" + nf(perMin, 0, 1);
+  }
+  println(line);
+  lastMoodStatsLogMs = now;
+  lastMoodStatsTotal = changesTotal;
+}
+
+void debugMoodSummaryTick() {
+  if (gusanos == null || gusanos.size() == 0) return;
+  if (frameCount - lastMoodSummaryFrame < 60) return;
+  lastMoodSummaryFrame = frameCount;
+
+  int changesTotal = 0;
+  int calmCount = 0;
+  int curiousCount = 0;
+  int shyCount = 0;
+  int fearCount = 0;
+  int aggressiveCount = 0;
+  for (Gusano g : gusanos) {
+    if (g == null) continue;
+    changesTotal += g.moodChangeCount;
+    switch (g.state) {
+      case Gusano.CALM:
+        calmCount++;
+        break;
+      case Gusano.CURIOUS:
+        curiousCount++;
+        break;
+      case Gusano.SHY:
+        shyCount++;
+        break;
+      case Gusano.FEAR:
+        fearCount++;
+        break;
+      case Gusano.AGGRESSIVE:
+        aggressiveCount++;
+        break;
+    }
+  }
+  float avgPer = changesTotal / (float)max(1, gusanos.size());
+  // println("[MOOD_SUM] frame=" + frameCount +
+  //         " changesTotal=" + changesTotal +
+  //         " avgPer=" + nf(avgPer, 0, 1) +
+  //         " states: CALM=" + calmCount +
+  //         " CUR=" + curiousCount +
+  //         " SHY=" + shyCount +
+  //         " FEAR=" + fearCount +
+  //         " AGG=" + aggressiveCount +
+  //         " stabilize=" + (STABILIZE_MOOD ? "1" : "0"));
+}
+
+void drawVecArrow(float x, float y, PVector v, float scale, int alpha, String label) {
+  if (v == null) return;
+  if (v.magSq() < 0.0001) return;
+  float vx = v.x * scale;
+  float vy = v.y * scale;
+  float ex = x + vx;
+  float ey = y + vy;
+  float ang = atan2(vy, vx);
+
+  pushStyle();
+  stroke(0, alpha);
+  line(x, y, ex, ey);
+  float ah = 4;
+  line(ex, ey, ex - cos(ang + PI * 0.75) * ah, ey - sin(ang + PI * 0.75) * ah);
+  line(ex, ey, ex - cos(ang - PI * 0.75) * ah, ey - sin(ang - PI * 0.75) * ah);
+  if (label != null && label.length() > 0) {
+    fill(0, alpha);
+    textSize(10);
+    text(label, ex + 3, ey - 3);
+  }
+  popStyle();
+}
+
+void drawDebugHelp() {
+  pushStyle();
+  textSize(12);
+  fill(0, 170);
+  float x = 12;
+  float y = 18;
+  float lh = 14;
+  text("Debug toggles:", x, y); y += lh;
+  text("S: steering overlay " + (debugSteering ? "ON" : "off"), x, y); y += lh;
+  text("O: objectives " + (debugObjetivos ? "ON" : "off"), x, y); y += lh;
+  text("M: mean flow log " + (debugFlowMean ? "ON" : "off") + " (console)", x, y); y += lh;
+  text("B: neighbor stats log " + (debugNeighborStats ? "ON" : "off") + " (console)", x, y); y += lh;
+  text("U: mood stats log " + (debugMoodStats ? "ON" : "off") + " (console)", x, y); y += lh;
+  text("P: FEAR logs " + (debugStateChanges ? "ON" : "off") + " (console)", x, y); y += lh;
+  text("N: steering neighbors " + (debugSteeringNeighbors ? "ON" : "off"), x, y); y += lh;
+  text("D: mood debug " + (DEBUG_MOOD ? "ON" : "off"), x, y); y += lh;
+  text("V: stabilize mood " + (STABILIZE_MOOD ? "ON" : "off"), x, y); y += lh;
+  text("J: jelly motion debug " + (debugJellyMotion ? "ON" : "off"), x, y); y += lh;
+  text("C: cycle debug " + (debugCycles ? "ON" : "off"), x, y); y += lh;
+  text("K: lock mood to personality " + (LOCK_MOOD_TO_PERSONALITY ? "ON" : "off"), x, y); y += lh;
+  text("G: jump/snap debug " + (debugJumps ? "ON" : "off"), x, y); y += lh;
+  text("X: auto-heal NaNs " + (AUTO_HEAL_NANS ? "ON" : "off"), x, y); y += lh;
+  text("L: biological vectors " + (debugBiologicalVectors ? "ON" : "off"), x, y); y += lh;
+  text("+/-: jelly count (" + numGusanos + ")", x, y); y += lh;
+  text("Q: show head " + (showHead ? "ON" : "off"), x, y); y += lh;
+  text("H: help " + (debugHelp ? "ON" : "off"), x, y); y += lh;
+  y += 4;
+  text("Ablation toggles:", x, y); y += lh;
+  text("1 flow " + (useFlow ? "ON" : "off") +
+       "  2 wake " + (useWake ? "ON" : "off") +
+       "  3 cohesion " + (useCohesion ? "ON" : "off"), x, y); y += lh;
+  text("4 separation " + (useSeparation ? "ON" : "off") +
+       "  5 wander " + (useWander ? "ON" : "off") +
+       "  6 wall avoid " + (useWallAvoid ? "ON" : "off"), x, y);
+  popStyle();
+}
+
+// --- Biological Vector Debug Visualization ---
+// Shows heading vs velocity vs steering to diagnose "rigid sliding" issues
+void drawBiologicalVectorDebug() {
+  pushStyle();
+  strokeWeight(2);
+  
+  for (Gusano g : gusanos) {
+    Segmento head = g.segmentos.get(0);
+    float scale = 40;
+    
+    // 1. HEADING (where the bell faces) - GREEN
+    float hx = cos(g.headAngle) * scale;
+    float hy = sin(g.headAngle) * scale;
+    stroke(0, 200, 0, 200);
+    line(head.x, head.y, head.x + hx, head.y + hy);
+    fill(0, 200, 0);
+    noStroke();
+    ellipse(head.x + hx, head.y + hy, 6, 6);
+    
+    // 2. VELOCITY (actual movement) - RED
+    float vScale = 8;
+    stroke(200, 0, 0, 200);
+    strokeWeight(2);
+    line(head.x, head.y, head.x + g.vel.x * vScale, head.y + g.vel.y * vScale);
+    
+    // 3. STEERING DESIRE (where it wants to go) - BLUE
+    PVector steer = g.steerSmoothed.copy();
+    if (steer.magSq() > 0.0001) {
+      steer.normalize().mult(scale * 0.8);
+      stroke(0, 100, 255, 180);
+      line(head.x, head.y, head.x + steer.x, head.y + steer.y);
+    }
+    
+    // 4. ALIGNMENT INDICATOR - Dot product between heading and velocity
+    PVector headingVec = new PVector(cos(g.headAngle), sin(g.headAngle));
+    PVector velNorm = g.vel.copy();
+    float velMag = velNorm.mag();
+    if (velMag > 0.1) {
+      velNorm.normalize();
+      float alignment = PVector.dot(headingVec, velNorm);
+      
+      // Color: Green = aligned, Yellow = perpendicular, Red = backwards
+      int r = (int)map(alignment, -1, 1, 255, 0);
+      int gr = (int)map(abs(alignment), 0, 1, 255, 200);
+      fill(r, gr, 0, 180);
+      noStroke();
+      ellipse(head.x, head.y - 20, 12, 12);
+      
+      // Label
+      fill(0, 180);
+      textSize(9);
+      text("align:" + nf(alignment, 0, 2), head.x + 8, head.y - 18);
+    }
+    
+    // 5. PHASE INDICATOR (propulsion vs coast)
+    float contractCurve = g.pulseContractCurve(g.pulsePhase);
+    String phaseLabel = contractCurve > 0.1 ? "THRUST" : "COAST";
+    fill(contractCurve > 0.1 ? color(255, 150, 0) : color(100, 100, 200));
+    textSize(10);
+    text(phaseLabel, head.x - 15, head.y + 30);
+  }
+  
+  // Legend (top-right)
+  fill(0, 150);
+  textSize(11);
+  float lx = width - 160;
+  float ly = 20;
+  text("Bio Vectors (L):", lx, ly);
+  strokeWeight(2);
+  stroke(0, 200, 0); line(lx, ly + 12, lx + 20, ly + 12); 
+  fill(0, 150); noStroke(); text("Heading", lx + 25, ly + 16);
+  stroke(200, 0, 0); line(lx, ly + 26, lx + 20, ly + 26);
+  fill(0, 150); text("Velocity", lx + 25, ly + 30);
+  stroke(0, 100, 255); line(lx, ly + 40, lx + 20, ly + 40);
+  fill(0, 150); text("Steer Desire", lx + 25, ly + 44);
+  fill(0, 150); text("● = alignment", lx, ly + 58);
+  
+  popStyle();
+}
