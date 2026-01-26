@@ -25,7 +25,9 @@ class GusanoDynamics {
       float alignment = PVector.dot(dir, tmpSteerDir);
       // Only allow full thrust when reasonably aligned (>~30° from target)
       // Smoothly reduce thrust as misalignment increases
-      alignmentGate = constrain(map(alignment, 0.3, 0.9, 0.15, 1.0), 0.15, 1.0);
+      // Raise minimum gate so misalignment doesn't strangle motion as often
+      // Relax the gate range so some thrust is allowed at larger misalignment
+      alignmentGate = constrain(map(alignment, 0.0, 0.9, 0.15, 1.0), 0.15, 1.0);
     }
     
     // Breathing variation: strength varies slowly over time like breathing rhythm
@@ -119,8 +121,9 @@ class GusanoDynamics {
       if (turnAway > PI) turnAway -= TWO_PI;
       if (turnAway < -PI) turnAway += TWO_PI;
       
-      // Apply rotational torque proportional to penetration squared (soft feel)
-      float torqueStrength = 0.12 * penetration * penetration;
+      // Apply reduced rotational torque proportional to penetration squared (so walls
+      // nudge heading but don't induce large rapid head rotations that propagate)
+      float torqueStrength = 0.06 * penetration * penetration;
       g.headAngle = lerpAngle(g.headAngle, g.headAngle + turnAway * 0.4, torqueStrength);
       
       // 2. SLIDING FRICTION: Allow movement parallel to wall, resist perpendicular
@@ -129,14 +132,16 @@ class GusanoDynamics {
       tmpVelPara.set(g.vel).sub(tmpVelPerp);
       
       // Dampen perpendicular velocity (into wall), preserve parallel (sliding)
-      float perpDamping = lerp(0.85, 0.3, penetration); // More penetration = more damping
+      // Increase damping at low penetration slightly to avoid sliding-induced snaking
+      float perpDamping = lerp(0.95, 0.2, penetration); // More penetration = more damping
       tmpVelPerp.mult(perpDamping);
       tmpVelPara.mult(0.95);
       tmpVelPara.add(tmpVelPerp);
       g.vel.set(tmpVelPara);
       
-      // 3. SOFT PUSH: Gentle outward force, not instant teleport
-      float pushStrength = penetration * penetration * 0.6;
+      // 3. SOFT PUSH: Gentle outward force, not instant teleport. Reduce magnitude
+      // so wall responses don't inject large lateral velocities into the chain.
+      float pushStrength = penetration * penetration * 0.3;
       tmpVelPerp.set(tmpWallNormal).mult(pushStrength);
       g.vel.add(tmpVelPerp);
     }
@@ -149,7 +154,8 @@ class GusanoDynamics {
       float vParallel = PVector.dot(g.vel, tmpHeading);
       tmpVParallel.set(tmpHeading).mult(vParallel);
       tmpVPerp.set(g.vel).sub(tmpVParallel);
-      float slipDamp = pow(constrain(SIDE_SLIP_DAMP, 0.0, 1.0), dtNorm);
+      // Increase effective damping per-frame to more strongly suppress lateral slip
+      float slipDamp = pow(constrain(SIDE_SLIP_DAMP, 0.0, 1.0), dtNorm * 1.8);
       tmpVPerp.mult(slipDamp);
       tmpVParallel.add(tmpVPerp);
       g.vel.set(tmpVParallel);
@@ -158,7 +164,8 @@ class GusanoDynamics {
 
   void applyDeadband() {
     // Deadband: stop tiny residual velocities from looking like nervous twitching
-    if (g.vel.magSq() < 0.0001) { // ~0.01^2
+    // Relax deadband slightly so very small motions aren't zeroed out
+    if (g.vel.magSq() < 0.000025) { // ~0.005^2
       g.vel.set(0, 0);
     }
   }

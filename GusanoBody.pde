@@ -3,11 +3,11 @@ class GusanoBody {
   final PVector tmpToParent = new PVector(0, 0);
   final PVector tmpPerp = new PVector(0, 0);
   // --- Phase 2: Bell-leads / tentacle-wave tuning ---
-  final float SEG_SMOOTH_HEAD = 0.86;   // stiffer near bell
-  final float SEG_SMOOTH_TAIL = 0.55;   // laggier toward tail
+  final float SEG_SMOOTH_HEAD = 0.92;   // stiffer near bell
+  final float SEG_SMOOTH_TAIL = 0.75;   // stiffer toward tail to reduce lag
   final float TURN_REF = 0.08;          // 
-  final float TURN_WAVE_BOOST = 0.85;   // 
-  final float TAIL_WAVE_BOOST = 1.15;   // >1 = amplify toward tail
+  final float TURN_WAVE_BOOST = 0.5;    // reduce turn-driven wave reintroduction
+  final float TAIL_WAVE_BOOST = 1.02;   // minimal tail amplification
 
   GusanoBody(Gusano g) {
     this.g = g;
@@ -23,8 +23,8 @@ class GusanoBody {
     float followPulseScale = lerp(FOLLOW_GLIDE_REDUCE, FOLLOW_CONTRACTION_BOOST, contractCurve);
     followSpeed *= followPulseScale;
 
-    float slowTurbulence = 1.2;
-    float fastTurbulence = 0.35;
+    float slowTurbulence = 0.9;
+    float fastTurbulence = 0.2;
     float turbulenceScale = lerp(slowTurbulence, fastTurbulence, streamline) * g.turbulenceMoodScale * g.baseTurbulence;
     float bodyGlideScale = lerp(1.0, GLIDE_BODY_TURB_SCALE, glide01);
     turbulenceScale *= bodyGlideScale;
@@ -56,8 +56,8 @@ class GusanoBody {
       Segmento seg = g.segmentos.get(i);
       Segmento segAnterior = g.segmentos.get(i - 1);
 
-      float turbulenceX = map(noise(t * 0.5, i * 0.1, g.noiseOffset), 0, 1, -1.5, 1.5) * turbulenceScale * jitterGate;
-      float turbulenceY = map(noise(t * 0.5, i * 0.1 + 100, g.noiseOffset), 0, 1, -1.5, 1.5) * turbulenceScale * jitterGate;
+      float turbulenceX = map(noise(t * 0.5, i * 0.1, g.noiseOffset), 0, 1, -0.6, 0.6) * turbulenceScale * jitterGate;
+      float turbulenceY = map(noise(t * 0.5, i * 0.1 + 100, g.noiseOffset), 0, 1, -0.6, 0.6) * turbulenceScale * jitterGate;
 
       // Add lateral wave motion perpendicular to movement direction
       float segmentRatio = float(i) / g.segmentos.size();
@@ -66,7 +66,7 @@ class GusanoBody {
       // Tail should move more than near-bell segments (wave propagates + amplifies)
       float tailScale = lerp(0.45, 1.0, segmentRatio);
       tailScale = pow(tailScale, TAIL_WAVE_BOOST);
-      float waveAmplitude = sin(wavePhase) * undulationStrength * tailScale;
+      float waveAmplitude = sin(wavePhase) * undulationStrength * tailScale * 0.6; // reduce wave amplitude
       
       // Calculate perpendicular offset to movement direction
       tmpToParent.set(segAnterior.x - seg.x, segAnterior.y - seg.y);

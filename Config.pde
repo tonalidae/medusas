@@ -47,23 +47,23 @@ float WATER_CAUSTIC_ALPHA_SCALE = 5.0;  // Sparkle layer (~20-30%)
 // GLIDE_BODY_TURB_SCALE: body turbulence during glide; lower = less body shimmer.
 // FOLLOW_CONTRACTION_BOOST / FOLLOW_GLIDE_REDUCE: body pull-in vs lag through pulse.
 float PULSE_RATE_SCALE = 0.70; // Global cadence scale; lower = slower pulses
-float UNDULATION_MAX = 0.15;
-float UNDULATION_SPEED_EXP = 2.0;
-float GLIDE_STEER_SCALE = 0.60;
-float GLIDE_HEAD_NOISE_SCALE = 0.4;
-float GLIDE_BODY_TURB_SCALE = 0.55;
-float FOLLOW_CONTRACTION_BOOST = 1.15;
-float FOLLOW_GLIDE_REDUCE = 0.7;
-float SIDE_SLIP_DAMP = 0.05; // Lower = less sideways slip (more diagonal motion)
-float THRUST_SMOOTH_ALPHA = 0.18; // Lower = smoother, slower response
+float UNDULATION_MAX = 0.08;
+float UNDULATION_SPEED_EXP = 2.2;
+float GLIDE_STEER_SCALE = 0.35;
+float GLIDE_HEAD_NOISE_SCALE = 0.25;
+float GLIDE_BODY_TURB_SCALE = 0.35;
+float FOLLOW_CONTRACTION_BOOST = 1.05;
+float FOLLOW_GLIDE_REDUCE = 0.8;
+float SIDE_SLIP_DAMP = 0; // Keep strong lateral damping by default
+float THRUST_SMOOTH_ALPHA = 0.08; // Lower = smoother, slower response
 float RECOVERY_THRUST_SCALE = 0.18; // Small tail force during relaxation
 float DRAG_RELAX_SCALE = 1.03; // Slightly higher drag during relaxation
 float DRAG_CONTRACT_SCALE = 0.96; // Slightly lower drag during contraction
 float CYCLE_EMA_ALPHA = 0.2; // Rolling average smoothing for cycle debug
-float STEER_SMOOTH_ALPHA = 0.18; // Lower = smoother turns, higher = snappier
+float STEER_SMOOTH_ALPHA = 0.16; // Slightly smoother turns
 float STEER_FLIP_DOT = -0.2; // If desired steer points opposite, damp the flip
 float STEER_FLIP_SLOW = 0.15; // Extra damping factor on flips
-float MAX_TURN_RAD = 0.32; // Max turn per frame (~18 deg)
+float MAX_TURN_RAD = 0.28; // Max turn per frame (~16 deg)
 
 
 // --- Stability tuning (multi-agent robustness) ---

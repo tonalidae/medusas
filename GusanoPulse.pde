@@ -7,7 +7,8 @@ class GusanoPulse {
 
   void updatePhase(float dt) {
     // Organic pulse irregularity: real organisms don't have perfect metronome timing
-    float pulseJitter = (noise(g.noiseOffset * 0.1, t * 0.3) - 0.5) * 0.15;
+    // Reduce jitter so cadence is more stable and doesn't inject heading noise
+    float pulseJitter = (noise(g.noiseOffset * 0.1, t * 0.3) - 0.5) * 0.08;
     float organicPulseRate = g.pulseRate * (1.0 + pulseJitter);
 
     float prevPhase = g.pulsePhase;
@@ -57,8 +58,8 @@ class GusanoPulse {
     float p = wrap01(phase);
     if (p < c) {
       float x = p / c;
-      // Fast snap-in: ease-out
-      return 1.0 - pow(1.0 - x, 3);
+      // Fast snap-in: ease-out (softer snap to reduce sudden head torque)
+      return 1.0 - pow(1.0 - x, 2);
     } else if (p < c + h) {
       return 1.0;
     } else {
@@ -74,6 +75,7 @@ class GusanoPulse {
     float p = wrap01(phase);
     if (p >= c) return 0;
     float x = p / c;
-    return sin(PI * sqrt(x));
+    // Soften and distribute thrust more evenly across contraction (less front-loaded)
+    return 0.95 * sin(PI * x);
   }
 }

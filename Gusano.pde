@@ -72,6 +72,25 @@ class Gusano {
   float aggroPauseTime = 0.4; // Pause duration before pounce (seconds)
   boolean aggroPounceReady = false; // Ready to accelerate
   int baseMood = SHY;
+
+  // --- Interaction Arc FSM (readable events: spot -> react -> cool down) ---
+  static final int ARC_CALM = 0;
+  static final int ARC_FLEE = 1;
+  static final int ARC_CHASE = 2;
+  static final int ARC_COOLDOWN = 3;
+
+  int arcState = ARC_CALM;
+  int arcTargetId = -1;
+  int arcStateStartMs = -9999;
+  int arcLastTriggerMs = -9999;
+
+  // Distances are in pixels (tune live)
+  float arcSpotRadius = 220;
+  float arcLoseRadius = 290;
+
+  // Timing (milliseconds)
+  int arcMinHoldMs = 650;      // minimum time to commit to flee/chase
+  int arcCooldownMs = 1200;    // after event, briefly return to calm
   float debugVmagNow = 0;
   float debugSpeedEMA = 0;
   float debugSpeedDelta = 0;
@@ -152,7 +171,7 @@ class Gusano {
 
     // Personality base values (some of these are set after label is chosen)
     baseSinkStrength = random(0.04, 0.10);
-    baseTurnRate = random(0.045, 0.085); // Higher turn rate for curves
+    baseTurnRate = random(0.055, 0.095); // Higher turn rate for curves (nudged up)
     baseTurbulence = random(0.9, 1.2);
     sizeFactor = random(0.85, 1.15);
 
@@ -218,17 +237,15 @@ class Gusano {
     // --- Species balancing (cheap): keep fast rhythms from teleporting ---
     // Species controls cadence; this block only scales displacement/feel.
     if ("CUBO".equals(speciesLabel)) {
-      // Fast pumping: reduce per-pulse displacement, add a touch more damping.
-      // (30% stronger reduction than before)
-      basePulseStrength *= random(0.385, 0.525); // 0.55..0.75 scaled by 0.7
-      baseDrag += random(0.039, 0.078);          // 0.03..0.06 scaled by 1.3
-      maxSpeed *= random(0.574, 0.644);          // 0.82..0.92 scaled by 0.7
+      // Fast pumping: reduce per-pulse displacement a bit less and add less damping
+      basePulseStrength *= random(0.45, 0.65);  // slightly stronger pulses
+      baseDrag += random(0.015, 0.05);          // reduce added drag
+      maxSpeed *= random(0.62, 0.72);
     } else if ("EPHYRA".equals(speciesLabel)) {
-      // Juvenile flutter: very frequent, so each pulse should be tiny and quickly damped.
-      // (30% stronger reduction than before)
-      basePulseStrength *= random(0.245, 0.385); // 0.35..0.55 scaled by 0.7
-      baseDrag += random(0.065, 0.104);          // 0.05..0.08 scaled by 1.3
-      maxSpeed *= random(0.490, 0.595);          // 0.70..0.85 scaled by 0.7
+      // Juvenile flutter: keep frequent pulses but allow more displacement and less drag
+      basePulseStrength *= random(0.33, 0.50);
+      baseDrag += random(0.03, 0.07);
+      maxSpeed *= random(0.55, 0.70);
     } else {
       // ROWER: keep as-is (slow cadence already reads well).
       maxSpeed *= random(0.95, 1.05);
@@ -284,11 +301,20 @@ class Gusano {
     cycleStartX = x;
     cycleStartY = y;
     cycleStartMs = millis();
+
+    // Interaction arc init
+    arcState = ARC_CALM;
+    arcTargetId = -1;
+    arcStateStartMs = millis();
+    arcLastTriggerMs = -9999;
   }
 
   void actualizar() {
     Segmento cabeza = segmentos.get(0);
-    float dt = (simDt > 0) ? simDt : (1.0 / max(1, frameRate));
+    // Time step: base dt is real seconds per frame; simDt acts as a TIME SCALE (0.5 = half speed, 2.0 = double speed)
+    float dtBase = 1.0 / max(1.0, frameRate);
+    float timeScale = (simDt > 0) ? simDt : 1.0;
+    float dt = dtBase * timeScale;
     dt = max(dt, 0.000001);
     float dtNorm = dt * 60.0;
     float marginBottom = clampMarginBottom;
@@ -347,8 +373,9 @@ class Gusano {
     float headPulseJitterGate = lerp(0.05, 1.0, constrain(preContractCurve, 0, 1));
 
     // Head turbulence
-    float headTurbulenceX = map(noise(t * 0.5, 0, noiseOffset), 0, 1, -1.5, 1.5) * headNoiseScale * baseTurbulence * jitterGate * headGlideScale * headPulseJitterGate;
-    float headTurbulenceY = map(noise(t * 0.5, 100, noiseOffset), 0, 1, -1.5, 1.5) * headNoiseScale * baseTurbulence * jitterGate * headGlideScale * headPulseJitterGate;
+    // Reduce head procedural jitter amplitude so it doesn't inject large lateral turns
+    float headTurbulenceX = map(noise(t * 0.5, 0, noiseOffset), 0, 1, -0.6, 0.6) * headNoiseScale * baseTurbulence * jitterGate * headGlideScale * headPulseJitterGate;
+    float headTurbulenceY = map(noise(t * 0.5, 100, noiseOffset), 0, 1, -0.6, 0.6) * headNoiseScale * baseTurbulence * jitterGate * headGlideScale * headPulseJitterGate;
 
     // Inertia / smooth turning
     PVector desiredSteer = steering.computeSteering(cabeza);

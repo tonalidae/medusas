@@ -1,9 +1,11 @@
 // --- Pulse-locked steering tuning ---
 // Lower = less steering during glide (relaxation). Higher = more constant steering.
-final float STEER_GLIDE_MIN = 0.04;
+// Values mirror the previous commit for more natural coasting control.
+final float STEER_GLIDE_MIN = 0.06;
 // Exponent shaping for how quickly steering ramps up during contraction.
-// Higher = steering is concentrated near peak contraction.
-final float STEER_GLIDE_EXP = 2.2;
+// Higher = steering concentrated near peak contraction; small increase biases
+// steering to contraction phase for clearer head-led turns.
+final float STEER_GLIDE_EXP = 3.0;
 
 class GusanoSteering {
   Gusano g;
@@ -39,12 +41,6 @@ class GusanoSteering {
       g.aggroTargetId = -1;
       g.aggroLastSeenMs = -9999;
     }
-
-    if (g.state == Gusano.AGGRESSIVE) {
-      PVector aggro = computeAggroPursuit(cabeza);
-      g.debugSteerAggro.set(aggro);
-      return aggro;
-    }
     
     // --- 1. SENSORY PARAMETERS (Rain World Style) ---
     float viewAngle = cos(radians(70)); // 140-degree field of vision
@@ -64,9 +60,34 @@ class GusanoSteering {
     // Use a steep gate: near-zero steering in glide, strong steering in contraction.
     float cc = constrain(contractCurve, 0, 1);
     float steerPhaseGate = STEER_GLIDE_MIN + (1.0 - STEER_GLIDE_MIN) * pow(cc, STEER_GLIDE_EXP);
+
+    // --- 0. INTERACTION ARCS (readable events) ---
+    // This sits *on top* of continuous forces. When an arc is active, we bias or override
+    // steering so encounters become legible: spot -> react -> cool down.
+    updateInteractionArc(cabeza);
+
+    // Arc overrides: flee/chase return early so the event reads clearly.
+    if (g.arcState == Gusano.ARC_FLEE) {
+      PVector flee = computeFleeArc(cabeza, cc);
+      // Still keep wall avoidance so fleeing doesn't slam into borders.
+      addWallAvoidInto(flee, cabeza, cc);
+      return flee;
+    }
+
+    if (g.arcState == Gusano.ARC_CHASE) {
+      // Drive existing pursuit system using the arc target.
+      if (g.arcTargetId >= 0) {
+        g.aggroTargetId = g.arcTargetId;
+        g.aggroLastSeenMs = millis();
+      }
+      PVector chase = computeAggroPursuit(cabeza);
+      addWallAvoidInto(chase, cabeza, cc);
+      g.debugSteerAggro.set(chase);
+      return chase;
+    }
     
     // Weights based on archetype (SHY vs AGGRESSIVE)
-    float wanderW = 1.6;
+    float wanderW = 0.9;
     float avoidW = 1.8;
     float sepW = (g.state == Gusano.SHY) ? 2.4 : 1.2;
     float mouseSenseDist = 350;
@@ -281,7 +302,7 @@ class GusanoSteering {
     // Adds gentle sideways drift so motion isn't synchronized or strictly forward.
     float sway = (noise(g.noiseOffset + 2000, t * 0.15) - 0.5) * 2.0;
     perp.set(-forward.y, forward.x);
-    tmp.set(perp).mult(sway * 0.35 * glideSteerScale * steerPhaseGate);
+    tmp.set(perp).mult(sway * 0.18 * glideSteerScale * steerPhaseGate);
     desired.add(tmp);
     g.debugSteerSway.set(tmp);
 
@@ -425,5 +446,153 @@ class GusanoSteering {
       if (other != null && other.id == id) return other;
     }
     return null;
+  }
+
+  void setArcState(int newState, int targetId) {
+    int now = millis();
+    if (g.arcState == newState && g.arcTargetId == targetId) return;
+    g.arcState = newState;
+    g.arcTargetId = targetId;
+    g.arcStateStartMs = now;
+    if (newState == Gusano.ARC_FLEE || newState == Gusano.ARC_CHASE) {
+      g.arcLastTriggerMs = now;
+    }
+  }
+
+  void updateInteractionArc(Segmento cabeza) {
+    int now = millis();
+
+    // Cooldown expires back to calm.
+    if (g.arcState == Gusano.ARC_COOLDOWN) {
+      if (now - g.arcStateStartMs >= g.arcCooldownMs) {
+        setArcState(Gusano.ARC_CALM, -1);
+      }
+      return;
+    }
+
+    // If we're in an active event, validate the target and decide whether to end.
+    if (g.arcState == Gusano.ARC_FLEE || g.arcState == Gusano.ARC_CHASE) {
+      Gusano target = findGusanoById(g.arcTargetId);
+      if (target == null || target.segmentos == null || target.segmentos.size() == 0) {
+        setArcState(Gusano.ARC_COOLDOWN, -1);
+        return;
+      }
+      Segmento th = target.segmentos.get(0);
+      float dx = th.x - cabeza.x;
+      float dy = th.y - cabeza.y;
+      float d2 = dx * dx + dy * dy;
+      float loseR2 = g.arcLoseRadius * g.arcLoseRadius;
+
+      // Hold the reaction at least arcMinHoldMs so it reads on screen.
+      boolean minHoldPassed = (now - g.arcStateStartMs) >= g.arcMinHoldMs;
+
+      // End condition: target is far enough away (flee succeeded / prey escaped)
+      if (minHoldPassed && d2 > loseR2) {
+        setArcState(Gusano.ARC_COOLDOWN, -1);
+      }
+      return;
+    }
+
+    // From calm: decide whether to start a new event.
+    // Small throttle so events don't re-trigger every frame.
+    if (now - g.arcLastTriggerMs < g.arcCooldownMs) return;
+
+    float spotR2 = g.arcSpotRadius * g.arcSpotRadius;
+
+    // Scan nearby neighbors (cheap). Prefer immediate vicinity.
+    queryNeighbors(cabeza.x, cabeza.y, neighborsScratch);
+
+    Gusano best = null;
+    float bestD2 = 1e18;
+
+    if (g.baseMood == Gusano.SHY) {
+      // SHY: start FLEE if an aggressive/dominant comes close.
+      for (Gusano other : neighborsScratch) {
+        if (other == null || other == g) continue;
+        if (other.baseMood != Gusano.AGGRESSIVE) continue;
+        Segmento oh = other.segmentos.get(0);
+        float dx = oh.x - cabeza.x;
+        float dy = oh.y - cabeza.y;
+        float d2 = dx * dx + dy * dy;
+        if (d2 < spotR2 && d2 < bestD2) {
+          bestD2 = d2;
+          best = other;
+        }
+      }
+      if (best != null) {
+        setArcState(Gusano.ARC_FLEE, best.id);
+      }
+
+    } else {
+      // AGGRESSIVE: start CHASE if a smaller/softer target is close.
+      for (Gusano other : neighborsScratch) {
+        if (other == null || other == g) continue;
+        // Don't endlessly chase other dominants; keep it legible.
+        if (other.baseMood == Gusano.AGGRESSIVE) continue;
+        // Prefer not chasing bigger targets.
+        if (other.sizeFactor > g.sizeFactor * 1.05) continue;
+
+        Segmento oh = other.segmentos.get(0);
+        float dx = oh.x - cabeza.x;
+        float dy = oh.y - cabeza.y;
+        float d2 = dx * dx + dy * dy;
+        if (d2 < spotR2 && d2 < bestD2) {
+          bestD2 = d2;
+          best = other;
+        }
+      }
+      if (best != null) {
+        setArcState(Gusano.ARC_CHASE, best.id);
+      }
+    }
+  }
+
+  PVector computeFleeArc(Segmento cabeza, float cc) {
+    Gusano threat = findGusanoById(g.arcTargetId);
+    if (threat == null || threat.segmentos == null || threat.segmentos.size() == 0) {
+      setArcState(Gusano.ARC_COOLDOWN, -1);
+      aggro.set(0, 0);
+      return aggro;
+    }
+    Segmento th = threat.segmentos.get(0);
+    away.set(cabeza.x - th.x, cabeza.y - th.y);
+    float m2 = away.magSq();
+    if (m2 < 0.0001) {
+      aggro.set(0, 0);
+      return aggro;
+    }
+    away.normalize();
+
+    // Survival instinct: partial phase bypass so flee still happens in glide.
+    float fleePhaseGate = lerp(0.55, 1.0, cc);
+
+    // Stronger flee when closer.
+    float d = dist(cabeza.x, cabeza.y, th.x, th.y);
+    float tClose = constrain(1.0 - (d / max(1.0, g.arcSpotRadius)), 0, 1);
+    float strength = lerp(1.2, 3.2, pow(tClose, 0.7));
+
+    aggro.set(away).mult(strength * fleePhaseGate);
+    return aggro;
+  }
+
+  void addWallAvoidInto(PVector v, Segmento cabeza, float cc) {
+    // Copy of the wall-avoid logic but additive into an existing vector.
+    float wallPhaseGate = lerp(0.5, 1.0, cc);
+    wallForce.set(0, 0);
+    float wallMarginX = clampMarginX;
+    float wallMarginTop = clampMarginTop;
+    float wallMarginBottom = clampMarginBottom;
+
+    if (cabeza.x < wallMarginX) wallForce.x += sq(1.0 - cabeza.x / wallMarginX);
+    if (cabeza.x > width - wallMarginX) wallForce.x -= sq(1.0 - (width - cabeza.x) / wallMarginX);
+    if (cabeza.y < wallMarginTop) wallForce.y += sq(1.0 - cabeza.y / wallMarginTop);
+    if (cabeza.y > height - wallMarginBottom) wallForce.y -= sq(1.0 - (height - cabeza.y) / wallMarginBottom);
+
+    float wallMag = wallForce.mag();
+    if (wallMag > 0.0001) {
+      wallForce.normalize();
+      tmp.set(wallForce).mult(1.8 * 3.0 * wallPhaseGate);
+      v.add(tmp);
+    }
   }
 }
