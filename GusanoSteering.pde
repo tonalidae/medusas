@@ -249,8 +249,10 @@ class GusanoSteering {
     // After pause: sudden acceleration burst
     if (!g.aggroPounceReady) {
       g.aggroPounceReady = true;
-      // Add extra impulse on first pounce frame
-      g.vel.add(PVector.mult(toTarget, 2.5));
+      // Add extra impulse on first pounce frame, aligned to heading
+      PVector heading = new PVector(cos(g.headAngle), sin(g.headAngle));
+      float align = max(0.0, PVector.dot(heading, toTarget));
+      g.vel.add(PVector.mult(heading, 2.5 * align));
     }
     
     // Pulse-synchronized chase: only thrust during contraction phase

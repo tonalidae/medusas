@@ -36,6 +36,11 @@ float GLIDE_HEAD_NOISE_SCALE = 0.4;
 float GLIDE_BODY_TURB_SCALE = 0.55;
 float FOLLOW_CONTRACTION_BOOST = 1.15;
 float FOLLOW_GLIDE_REDUCE = 0.7;
+float SIDE_SLIP_DAMP = 0.05; // Lower = less sideways slip (more diagonal motion)
+float THRUST_SMOOTH_ALPHA = 0.18; // Lower = smoother, slower response
+float RECOVERY_THRUST_SCALE = 0.18; // Small tail force during relaxation
+float DRAG_RELAX_SCALE = 1.03; // Slightly higher drag during relaxation
+float DRAG_CONTRACT_SCALE = 0.96; // Slightly lower drag during contraction
 float CYCLE_EMA_ALPHA = 0.2; // Rolling average smoothing for cycle debug
 float STEER_SMOOTH_ALPHA = 0.18; // Lower = smoother turns, higher = snappier
 float STEER_FLIP_DOT = -0.2; // If desired steer points opposite, damp the flip

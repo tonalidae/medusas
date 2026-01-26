@@ -92,6 +92,7 @@ class Gusano {
   float debugUndulationGate = 0;
   float debugWanderScale = 0;
   PVector steerSmoothed = new PVector(0, 0);
+  float thrustSmoothed = 0;
   float lastCycleHz = 0;
   float lastCycleDist = 0;
   float lastCycleSpeed = 0;
@@ -143,10 +144,7 @@ class Gusano {
     contractPortion = random(0.20, 0.30); // Individual contraction timing
     holdPortion = random(0.08, 0.15); // Individual hold duration
 
-    // Personality base values
-    basePulseRate = random(0.25, 0.6); // Wider range for individual rhythms
-    basePulseStrength = random(0.9, 1.9); // More variation in power
-    baseDrag = random(0.88, 0.91); // Lower drag for momentum arcs
+    // Personality base values (some of these are set after label is chosen)
     baseSinkStrength = random(0.04, 0.10);
     baseTurnRate = random(0.045, 0.085); // Higher turn rate for curves
     baseTurbulence = random(0.9, 1.2);
@@ -168,6 +166,10 @@ class Gusano {
         timidity = random(0.7, 1.0);
         aggression = random(0.0, 0.2);
         curiosity = random(0.0, 0.3);
+        // Slower, softer cycles
+        basePulseRate = random(0.18, 0.38);
+        basePulseStrength = random(0.7, 1.2);
+        baseDrag = random(0.90, 0.93);
         break;
       case "DOM":
       default:
@@ -175,6 +177,10 @@ class Gusano {
         timidity = random(0.0, 0.2);
         aggression = random(0.7, 1.0);
         curiosity = random(0.0, 0.3);
+        // Faster, stronger cycles
+        basePulseRate = random(0.22, 0.50);
+        basePulseStrength = random(1.1, 2.1);
+        baseDrag = random(0.86, 0.90);
         break;
     }
 
@@ -366,33 +372,39 @@ class Gusano {
       cycleStartY = cabeza.y;
     }
 
-    float impulseAmount = 0;
     float contractCurve = pulseContractCurve(pulsePhase);
     float contraction = pulseShape(pulsePhase);
     float glide01 = 1.0 - contractCurve;
     debugContraction = contraction;
     debugGlideScale = glide01;
+    // === BIOLOGICAL CONSTRAINT: Orientation-Gated Thrust ===
+    // Jellyfish can only move effectively in the direction they're facing.
+    // Gate thrust by alignment between heading and desired steering direction.
+    PVector headingVec = new PVector(cos(headAngle), sin(headAngle));
+    PVector steerDir = steerSmoothed.copy();
+    
+    float alignmentGate = 1.0; // Default: full thrust
+    if (steerDir.magSq() > 0.0001) {
+      steerDir.normalize();
+      // Dot product: 1 = aligned, 0 = perpendicular, -1 = opposite
+      float alignment = PVector.dot(headingVec, steerDir);
+      // Only allow full thrust when reasonably aligned (>~30° from target)
+      // Smoothly reduce thrust as misalignment increases
+      alignmentGate = constrain(map(alignment, 0.3, 0.9, 0.15, 1.0), 0.15, 1.0);
+    }
+    
+    // Breathing variation: strength varies slowly over time like breathing rhythm
+    float breathCycle = noise(noiseOffset * 0.05, t * 0.08) * 0.3 + 0.85;
+    float targetImpulse = 0;
     if (contractCurve > 0) {
-      // === BIOLOGICAL CONSTRAINT: Orientation-Gated Thrust ===
-      // Jellyfish can only move effectively in the direction they're facing.
-      // Gate thrust by alignment between heading and desired steering direction.
-      PVector headingVec = new PVector(cos(headAngle), sin(headAngle));
-      PVector steerDir = steerSmoothed.copy();
-      
-      float alignmentGate = 1.0; // Default: full thrust
-      if (steerDir.magSq() > 0.0001) {
-        steerDir.normalize();
-        // Dot product: 1 = aligned, 0 = perpendicular, -1 = opposite
-        float alignment = PVector.dot(headingVec, steerDir);
-        // Only allow full thrust when reasonably aligned (>~30° from target)
-        // Smoothly reduce thrust as misalignment increases
-        alignmentGate = constrain(map(alignment, 0.3, 0.9, 0.15, 1.0), 0.15, 1.0);
-      }
-      
-      // Breathing variation: strength varies slowly over time like breathing rhythm
-      float breathCycle = noise(noiseOffset * 0.05, t * 0.08) * 0.3 + 0.85;
-      impulseAmount = pulseStrength * contractCurve * dtNorm * thrustScale * breathCycle * alignmentGate;
-      vel.add(PVector.mult(dir, impulseAmount));
+      targetImpulse = pulseStrength * contractCurve * dtNorm * thrustScale * breathCycle * alignmentGate;
+    }
+    float recoveryGate = constrain(1.0 - contraction, 0, 1);
+    float recoveryImpulse = pulseStrength * RECOVERY_THRUST_SCALE * recoveryGate * dtNorm * thrustScale * alignmentGate;
+    targetImpulse += recoveryImpulse;
+    thrustSmoothed = lerp(thrustSmoothed, targetImpulse, THRUST_SMOOTH_ALPHA);
+    if (thrustSmoothed > 0.00001) {
+      vel.add(PVector.mult(dir, thrustSmoothed));
     }
 
     // Buoyancy drift: subtle sinking when not contracting
@@ -404,7 +416,8 @@ class Gusano {
     vel.y += sinkStrengthEffective * idleFactor * dtNorm;
     vel.y -= buoyancyLift * contraction * dtNorm;
 
-    vel.mult(drag);
+    float dragPhaseScale = lerp(DRAG_RELAX_SCALE, DRAG_CONTRACT_SCALE, contractCurve);
+    vel.mult(drag * dragPhaseScale);
 
     // === BIOLOGICAL CONSTRAINT: Soft-Body Wall Response ===
     // Instead of zeroing velocity, apply rotational deflection.
@@ -469,6 +482,15 @@ class Gusano {
       // 3. SOFT PUSH: Gentle outward force, not instant teleport
       float pushStrength = penetration * penetration * 0.6;
       vel.add(PVector.mult(wallNormal, pushStrength));
+    }
+
+    // Reduce sideways slip so movement stays closer to heading (avoid lateral "steps")
+    if (vel.magSq() > 0.0001) {
+      float vParallel = PVector.dot(vel, headingVec);
+      PVector vParallelVec = PVector.mult(headingVec, vParallel);
+      PVector vPerp = PVector.sub(vel, vParallelVec);
+      vPerp.mult(SIDE_SLIP_DAMP);
+      vel.set(PVector.add(vParallelVec, vPerp));
     }
 
     // Deadband: stop tiny residual velocities from looking like nervous twitching
