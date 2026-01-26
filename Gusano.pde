@@ -1,9 +1,6 @@
 class Gusano {
-  static final int CALM = 0;
-  static final int CURIOUS = 1;
-  static final int SHY = 2;
-  static final int FEAR = 3;
-  static final int AGGRESSIVE = 4;
+  static final int SHY = 0;
+  static final int AGGRESSIVE = 1;
 
   ArrayList<Segmento> segmentos;
   color colorGusano;
@@ -16,6 +13,9 @@ class Gusano {
 
   // Current angle of the head (for smooth turning)
   float headAngle = 0;
+  float prevHeadAngleForTurn = 0;
+  float turnEMA = 0;
+  float turnEMAFactor = 0.18;
 
   // Velocity-based swimming
   PVector vel;
@@ -42,31 +42,27 @@ class Gusano {
   float aggression;
   float curiosity;
   String personalityLabel;
+  // Species archetype (rhythm baseline)
+  String speciesLabel;
 
   // Mood/state
   int state;
   float stateTimer;
   float stateDuration;
-  float stateCooldown;
   float moodBlend;
   float turnRate;
   float followMoodScale;
   float turbulenceMoodScale;
   float headNoiseScale;
-  float postFearTimer;
   float prevSpeed;
   float speedEMA = 0;
   float speedEMAFactor = 0.12;
   int spikeFrames = 0;
   int spikeFramesRequired = 4;
   float spikeThreshold = 8.0;
-  int fearCooldownFrames = 0;
-  String lastFearReason = "";
-  float lastFearTime = -9999;
   int moodChangeCount = 0;
   int lastMoodChangeMs = 0;
   int lastState = -1;
-  int lastFearEntryMs = -1;
   int lastAggressiveEntryMs = -1;
   int lastClampMsX = -9999;
   int lastClampMsY = -9999;
@@ -75,7 +71,7 @@ class Gusano {
   int aggroLockMs = -9999; // When target was first locked
   float aggroPauseTime = 0.4; // Pause duration before pounce (seconds)
   boolean aggroPounceReady = false; // Ready to accelerate
-  int baseMood = CALM;
+  int baseMood = SHY;
   float debugVmagNow = 0;
   float debugSpeedEMA = 0;
   float debugSpeedDelta = 0;
@@ -90,8 +86,16 @@ class Gusano {
   float debugHeadGlideScale = 0;
   float debugBodyGlideScale = 0;
   float debugUndulationGate = 0;
+  float debugTurnAmt = 0;
   float debugWanderScale = 0;
   PVector steerSmoothed = new PVector(0, 0);
+  PVector tmpSteerA = new PVector(0, 0);
+  PVector tmpSteerB = new PVector(0, 0);
+  PVector tmpSteer = new PVector(0, 0);
+  PVector tmpVelDir = new PVector(0, 0);
+  PVector tmpHeadingVec = new PVector(0, 0);
+  PVector tmpDir = new PVector(0, 0);
+  PVector tmpAway = new PVector(0, 0);
   float thrustSmoothed = 0;
   float lastCycleHz = 0;
   float lastCycleDist = 0;
@@ -109,6 +113,8 @@ class Gusano {
   PVector debugSteerNeighbors = new PVector(0, 0);
   PVector debugSteerWander = new PVector(0, 0);
   PVector debugSteerSway = new PVector(0, 0);
+  PVector debugSteerAlign = new PVector(0, 0);
+  PVector debugSteerOrbit = new PVector(0, 0);
   PVector debugSteerAggro = new PVector(0, 0);
   int prevMood = -1;
   int lastMoodChangeFrame = 0;
@@ -121,6 +127,9 @@ class Gusano {
   GusanoMood mood;
   GusanoSteering steering;
   GusanoRender render;
+  GusanoPulse pulse;
+  GusanoBody body;
+  GusanoDynamics dynamics;
 
   Gusano(float x, float y, color c, int id_) {
     segmentos = new ArrayList<Segmento>();
@@ -140,9 +149,6 @@ class Gusano {
     pulsePhase = (float)id / max(1, numGusanos) + random(0.0, 0.5);
     pulsePhase = pulsePhase % 1.0;
     
-    // Organic pulse variation: each jellyfish has unique timing irregularities
-    contractPortion = random(0.20, 0.30); // Individual contraction timing
-    holdPortion = random(0.08, 0.15); // Individual hold duration
 
     // Personality base values (some of these are set after label is chosen)
     baseSinkStrength = random(0.04, 0.10);
@@ -150,7 +156,32 @@ class Gusano {
     baseTurbulence = random(0.9, 1.2);
     sizeFactor = random(0.85, 1.15);
 
-    // Personality archetype (stable baseline)
+    // --- Species archetype (stable rhythm baseline) ---
+    float sp = random(1);
+    if (sp < 0.65) {
+      speciesLabel = "ROWER";   // scypho-like: slower, longer coasts
+    } else if (sp < 0.85) {
+      speciesLabel = "CUBO";    // cubo-like: faster, more continuous pumping
+    } else {
+      speciesLabel = "EPHYRA";  // juvenile flutter
+    }
+
+    // Set baseline rhythm by species (Hz + phase proportions)
+    if ("ROWER".equals(speciesLabel)) {
+      basePulseRate = random(0.35, 0.85);
+      contractPortion = random(0.24, 0.38);
+      holdPortion = random(0.16, 0.30);
+    } else if ("CUBO".equals(speciesLabel)) {
+      basePulseRate = random(1.6, 2.4);
+      contractPortion = random(0.22, 0.30);
+      holdPortion = random(0.08, 0.16);
+    } else { // EPHYRA
+      basePulseRate = random(1.2, 3.0);
+      contractPortion = random(0.22, 0.30);
+      holdPortion = random(0.07, 0.14);
+    }
+
+    // --- Personality archetype (stable baseline) ---
     float pr = random(1);
     if (pr < 0.5) {
       personalityLabel = "DOM";
@@ -166,8 +197,8 @@ class Gusano {
         timidity = random(0.7, 1.0);
         aggression = random(0.0, 0.2);
         curiosity = random(0.0, 0.3);
-        // Slower, softer cycles
-        basePulseRate = random(0.18, 0.38);
+        // Rhythm is controlled by speciesLabel (not personality)
+        // Strength/drag baselines (personality flavor)
         basePulseStrength = random(0.7, 1.2);
         baseDrag = random(0.90, 0.93);
         break;
@@ -177,11 +208,47 @@ class Gusano {
         timidity = random(0.0, 0.2);
         aggression = random(0.7, 1.0);
         curiosity = random(0.0, 0.3);
-        // Faster, stronger cycles
-        basePulseRate = random(0.22, 0.50);
+        // Rhythm is controlled by speciesLabel (not personality)
+        // Strength/drag baselines (personality flavor)
         basePulseStrength = random(1.1, 2.1);
         baseDrag = random(0.86, 0.90);
         break;
+    }
+
+    // --- Species balancing (cheap): keep fast rhythms from teleporting ---
+    // Species controls cadence; this block only scales displacement/feel.
+    if ("CUBO".equals(speciesLabel)) {
+      // Fast pumping: reduce per-pulse displacement, add a touch more damping.
+      // (30% stronger reduction than before)
+      basePulseStrength *= random(0.385, 0.525); // 0.55..0.75 scaled by 0.7
+      baseDrag += random(0.039, 0.078);          // 0.03..0.06 scaled by 1.3
+      maxSpeed *= random(0.574, 0.644);          // 0.82..0.92 scaled by 0.7
+    } else if ("EPHYRA".equals(speciesLabel)) {
+      // Juvenile flutter: very frequent, so each pulse should be tiny and quickly damped.
+      // (30% stronger reduction than before)
+      basePulseStrength *= random(0.245, 0.385); // 0.35..0.55 scaled by 0.7
+      baseDrag += random(0.065, 0.104);          // 0.05..0.08 scaled by 1.3
+      maxSpeed *= random(0.490, 0.595);          // 0.70..0.85 scaled by 0.7
+    } else {
+      // ROWER: keep as-is (slow cadence already reads well).
+      maxSpeed *= random(0.95, 1.05);
+    }
+
+    // Global cadence control (post-species, pre-clamp)
+    basePulseRate *= PULSE_RATE_SCALE;
+
+    // Clamp to sane ranges
+    baseDrag = constrain(baseDrag, 0.82, 0.97);
+    basePulseStrength = constrain(basePulseStrength, 0.25, 2.4);
+    maxSpeed = constrain(maxSpeed, 6.0, 16.0);
+
+    // Keep phase proportions sane
+    contractPortion = constrain(contractPortion, 0.12, 0.45);
+    holdPortion = constrain(holdPortion, 0.02, 0.45);
+    if (contractPortion + holdPortion > 0.85) {
+      float s = 0.85 / (contractPortion + holdPortion);
+      contractPortion *= s;
+      holdPortion *= s;
     }
 
     // Current (smoothed) params
@@ -199,16 +266,19 @@ class Gusano {
     state = baseMood;
     stateTimer = 0;
     stateDuration = random(4.0, 8.0);
-    stateCooldown = 1.5;
     lastState = state;
     moodBlend = 1.0;
-    postFearTimer = 0;
     prevSpeed = 0;
+    prevHeadAngleForTurn = headAngle;
+    turnEMA = 0;
 
     colorLerpSpeed = 0.05;
     mood = new GusanoMood(this);
     steering = new GusanoSteering(this);
     render = new GusanoRender(this);
+    pulse = new GusanoPulse(this);
+    body = new GusanoBody(this);
+    dynamics = new GusanoDynamics(this);
     targetColor = mood.paletteForState(state);
     currentColor = targetColor;
     cycleStartX = x;
@@ -218,9 +288,8 @@ class Gusano {
 
   void actualizar() {
     Segmento cabeza = segmentos.get(0);
-    float dt = 1.0 / max(1, frameRate);
-    // Startup / low-FPS safety: prevent huge impulses when frameRate is small
-    dt = constrain(dt, 1.0/120.0, 1.0/20.0);
+    float dt = (simDt > 0) ? simDt : (1.0 / max(1, frameRate));
+    dt = max(dt, 0.000001);
     float dtNorm = dt * 60.0;
     float marginBottom = clampMarginBottom;
 
@@ -259,32 +328,27 @@ class Gusano {
     if (mousePressed) {
       float md = dist(cabeza.x, cabeza.y, mouseX, mouseY);
       if (md < 50) {
-        PVector away = new PVector(cabeza.x - mouseX, cabeza.y - mouseY);
-        if (away.magSq() > 0.0001) {
-          away.normalize();
-          vel.add(PVector.mult(away, 3.5));
-        }
-        if (stateCooldown <= 0) {
-          // Personality lock: only aggressive personalities react with AGGRESSIVE.
-          if (baseMood == AGGRESSIVE && state != AGGRESSIVE) {
-            lastFearReason = "MOUSE_HIT_AGG";
-            lastFearTime = millis();
-            stateCooldown = random(3.0, 6.0);
-            fearCooldownFrames = int(random(180, 360));
-            mood.setState(AGGRESSIVE, random(2.2, 3.6));
-          }
+        tmpAway.set(cabeza.x - mouseX, cabeza.y - mouseY);
+        if (tmpAway.magSq() > 0.0001) {
+          tmpAway.normalize();
+          tmpAway.mult(3.5 * dtNorm);
+          vel.add(tmpAway);
         }
       }
     }
+
+    // Advance pulse phase EARLY so steering + head + thrust use the same timing
+    pulse.updatePhase(dt);
 
     float preContractCurve = pulseContractCurve(pulsePhase);
     float glide01Pre = 1.0 - preContractCurve;
     float headGlideScale = lerp(1.0, GLIDE_HEAD_NOISE_SCALE, glide01Pre);
     debugHeadGlideScale = headGlideScale;
+    float headPulseJitterGate = lerp(0.05, 1.0, constrain(preContractCurve, 0, 1));
 
     // Head turbulence
-    float headTurbulenceX = map(noise(t * 0.5, 0, noiseOffset), 0, 1, -1.5, 1.5) * headNoiseScale * baseTurbulence * jitterGate * headGlideScale;
-    float headTurbulenceY = map(noise(t * 0.5, 100, noiseOffset), 0, 1, -1.5, 1.5) * headNoiseScale * baseTurbulence * jitterGate * headGlideScale;
+    float headTurbulenceX = map(noise(t * 0.5, 0, noiseOffset), 0, 1, -1.5, 1.5) * headNoiseScale * baseTurbulence * jitterGate * headGlideScale * headPulseJitterGate;
+    float headTurbulenceY = map(noise(t * 0.5, 100, noiseOffset), 0, 1, -1.5, 1.5) * headNoiseScale * baseTurbulence * jitterGate * headGlideScale * headPulseJitterGate;
 
     // Inertia / smooth turning
     PVector desiredSteer = steering.computeSteering(cabeza);
@@ -292,28 +356,39 @@ class Gusano {
     if (steerSmoothed.magSq() < 0.0001) {
       steerSmoothed.set(desiredSteer);
     } else {
-      float smoothAlpha = STEER_SMOOTH_ALPHA;
+      float baseAlpha = STEER_SMOOTH_ALPHA;
       if (desiredSteer.magSq() > 0.0001) {
-        PVector a = steerSmoothed.copy();
-        PVector b = desiredSteer.copy();
-        a.normalize();
-        b.normalize();
-        float dot = PVector.dot(a, b);
-        if (dot < STEER_FLIP_DOT) smoothAlpha *= STEER_FLIP_SLOW;
+        tmpSteerA.set(steerSmoothed);
+        tmpSteerB.set(desiredSteer);
+        tmpSteerA.normalize();
+        tmpSteerB.normalize();
+        float dot = PVector.dot(tmpSteerA, tmpSteerB);
+        if (dot < STEER_FLIP_DOT) baseAlpha *= STEER_FLIP_SLOW;
       }
+      float smoothAlpha = dtAlpha(baseAlpha, dt);
       steerSmoothed.lerp(desiredSteer, smoothAlpha);
     }
-    PVector steer = steerSmoothed.copy();
-    if (steer.magSq() < 0.0001) {
-      steer.set(cos(headAngle), sin(headAngle));
+    tmpSteer.set(steerSmoothed);
+    if (tmpSteer.magSq() < 0.0001) {
+      tmpSteer.set(cos(headAngle), sin(headAngle));
     } else {
-      steer.normalize();
+      tmpSteer.normalize();
     }
-    float desiredAngle = atan2(steer.y, steer.x);
+
+    // During glide, trust velocity direction more than instantaneous steering
+    tmpVelDir.set(vel);
+    if (tmpVelDir.magSq() > 0.0001) tmpVelDir.normalize();
+    float contractNow = pulseContractCurve(pulsePhase);
+    float glideTrust = constrain(1.0 - contractNow, 0, 1); // 1 in glide, 0 in contraction
+    tmpHeadingVec.set(tmpSteer);
+    if (tmpVelDir.magSq() > 0.0001) {
+      tmpHeadingVec.lerp(tmpVelDir, glideTrust);
+    }
+    float desiredAngle = atan2(tmpHeadingVec.y, tmpHeadingVec.x);
     if (debugSteering) {
       pushStyle();
       stroke(0, 120, 255, 140);
-      line(cabeza.x, cabeza.y, cabeza.x + steer.x * 40, cabeza.y + steer.y * 40);
+      line(cabeza.x, cabeza.y, cabeza.x + tmpHeadingVec.x * 40, cabeza.y + tmpHeadingVec.y * 40);
       popStyle();
     }
 
@@ -321,291 +396,80 @@ class Gusano {
     float diff = desiredAngle - headAngle;
     if (diff > PI) diff -= TWO_PI;
     if (diff < -PI) diff += TWO_PI;
-    diff = constrain(diff, -MAX_TURN_RAD, MAX_TURN_RAD);
+    float maxTurn = MAX_TURN_RAD * dtNorm;
+    diff = constrain(diff, -maxTurn, maxTurn);
     float limitedAngle = headAngle + diff;
-    headAngle = lerpAngle(headAngle, limitedAngle, turnRate);
+    // Turn mostly during contraction; coast keeps heading steadier
+    float turnGate = lerp(0.25, 1.0, constrain(contractNow, 0, 1));
+    float turnAlpha = dtAlpha(turnRate * turnGate, dt);
+    headAngle = lerpAngle(headAngle, limitedAngle, turnAlpha);
+
+    // --- Turn intensity (for bell-led wave propagation) ---
+    float dTurn = headAngle - prevHeadAngleForTurn;
+    if (dTurn > PI) dTurn -= TWO_PI;
+    if (dTurn < -PI) dTurn += TWO_PI;
+    float turnAmt = abs(dTurn);
+    turnEMA = lerp(turnEMA, turnAmt, turnEMAFactor);
+    prevHeadAngleForTurn = headAngle;
+    debugTurnAmt = turnEMA;
 
     float speed01 = constrain(vmagNow / maxSpeed, 0, 1);
     float thrustScale = constrain(1.0 - speed01, 0.15, 1.0);
 
     // Velocity-based movement with pulse thrust and drag
-    PVector dir = new PVector(cos(headAngle), sin(headAngle));
-
-    // Organic pulse irregularity: real organisms don't have perfect metronome timing
-    float pulseJitter = (noise(noiseOffset * 0.1, t * 0.3) - 0.5) * 0.15;
-    float organicPulseRate = pulseRate * (1.0 + pulseJitter);
-    
-    float prevPhase = pulsePhase;
-    pulsePhase += organicPulseRate * dt;
-    if (pulsePhase >= 1.0) {
-      pulsePhase -= 1.0;
-    }
-    if (pulsePhase < prevPhase) {
-      int nowMs = millis();
-      if (cycleStartMs > 0) {
-        float dtCycle = (nowMs - cycleStartMs) / 1000.0;
-        lastCycleHz = (dtCycle > 0.0001) ? (1.0 / dtCycle) : 0;
-        lastCycleDist = dist(cycleStartX, cycleStartY, cabeza.x, cabeza.y);
-        lastCycleSpeed = lastCycleHz * lastCycleDist;
-        if (avgCycleHz <= 0) {
-          avgCycleHz = lastCycleHz;
-          avgCycleDist = lastCycleDist;
-          avgCycleSpeed = lastCycleSpeed;
-        } else {
-          avgCycleHz = lerp(avgCycleHz, lastCycleHz, CYCLE_EMA_ALPHA);
-          avgCycleDist = lerp(avgCycleDist, lastCycleDist, CYCLE_EMA_ALPHA);
-          avgCycleSpeed = lerp(avgCycleSpeed, lastCycleSpeed, CYCLE_EMA_ALPHA);
-        }
-        if (debugCycles) {
-          println("[CYCLE] id=" + id + " " + personalityLabel +
-                  " state=" + stateLabel() +
-                  " hz=" + nf(lastCycleHz, 0, 2) +
-                  " dist=" + nf(lastCycleDist, 0, 2) +
-                  " spd=" + nf(lastCycleSpeed, 0, 2) +
-                  " avgHz=" + nf(avgCycleHz, 0, 2) +
-                  " avgDist=" + nf(avgCycleDist, 0, 2) +
-                  " avgSpd=" + nf(avgCycleSpeed, 0, 2));
-        }
-      }
-      cycleStartMs = nowMs;
-      cycleStartX = cabeza.x;
-      cycleStartY = cabeza.y;
-    }
+    tmpDir.set(cos(headAngle), sin(headAngle));
 
     float contractCurve = pulseContractCurve(pulsePhase);
     float contraction = pulseShape(pulsePhase);
     float glide01 = 1.0 - contractCurve;
     debugContraction = contraction;
     debugGlideScale = glide01;
-    // === BIOLOGICAL CONSTRAINT: Orientation-Gated Thrust ===
-    // Jellyfish can only move effectively in the direction they're facing.
-    // Gate thrust by alignment between heading and desired steering direction.
-    PVector headingVec = new PVector(cos(headAngle), sin(headAngle));
-    PVector steerDir = steerSmoothed.copy();
-    
-    float alignmentGate = 1.0; // Default: full thrust
-    if (steerDir.magSq() > 0.0001) {
-      steerDir.normalize();
-      // Dot product: 1 = aligned, 0 = perpendicular, -1 = opposite
-      float alignment = PVector.dot(headingVec, steerDir);
-      // Only allow full thrust when reasonably aligned (>~30° from target)
-      // Smoothly reduce thrust as misalignment increases
-      alignmentGate = constrain(map(alignment, 0.3, 0.9, 0.15, 1.0), 0.15, 1.0);
-    }
-    
-    // Breathing variation: strength varies slowly over time like breathing rhythm
-    float breathCycle = noise(noiseOffset * 0.05, t * 0.08) * 0.3 + 0.85;
-    float targetImpulse = 0;
-    if (contractCurve > 0) {
-      targetImpulse = pulseStrength * contractCurve * dtNorm * thrustScale * breathCycle * alignmentGate;
-    }
-    float recoveryGate = constrain(1.0 - contraction, 0, 1);
-    float recoveryImpulse = pulseStrength * RECOVERY_THRUST_SCALE * recoveryGate * dtNorm * thrustScale * alignmentGate;
-    targetImpulse += recoveryImpulse;
-    thrustSmoothed = lerp(thrustSmoothed, targetImpulse, THRUST_SMOOTH_ALPHA);
-    if (thrustSmoothed > 0.00001) {
-      vel.add(PVector.mult(dir, thrustSmoothed));
-    }
-
-    // Buoyancy drift: subtle sinking when not contracting
-    float sinkStrengthEffective = sinkStrength;
-    if (cabeza.y > height - marginBottom) {
-      sinkStrengthEffective *= 0.2;
-    }
-    float idleFactor = 1.0 - contraction;
-    vel.y += sinkStrengthEffective * idleFactor * dtNorm;
-    vel.y -= buoyancyLift * contraction * dtNorm;
-
-    float dragPhaseScale = lerp(DRAG_RELAX_SCALE, DRAG_CONTRACT_SCALE, contractCurve);
-    vel.mult(drag * dragPhaseScale);
-
-    // === BIOLOGICAL CONSTRAINT: Soft-Body Wall Response ===
-    // Instead of zeroing velocity, apply rotational deflection.
-    // The jellyfish "feels" the wall and rotates away while sliding along it.
-    float leftBound = clampMarginX;
-    float rightBound = width - clampMarginX;
-    float topBound = clampMarginTop;
-    float bottomBound = height - clampMarginBottom;
-    float edgeSoftness = 50; // Soft zone before hard boundary
-
-    // Calculate wall penetration and normal
-    PVector wallNormal = new PVector(0, 0);
-    float penetration = 0;
-
-    if (cabeza.x < leftBound + edgeSoftness) {
-      float depth = constrain(1.0 - (cabeza.x - leftBound) / edgeSoftness, 0, 1);
-      wallNormal.x += depth;
-      penetration = max(penetration, depth);
-    }
-    if (cabeza.x > rightBound - edgeSoftness) {
-      float depth = constrain(1.0 - (rightBound - cabeza.x) / edgeSoftness, 0, 1);
-      wallNormal.x -= depth;
-      penetration = max(penetration, depth);
-    }
-    if (cabeza.y < topBound + edgeSoftness) {
-      float depth = constrain(1.0 - (cabeza.y - topBound) / edgeSoftness, 0, 1);
-      wallNormal.y += depth;
-      penetration = max(penetration, depth);
-    }
-    if (cabeza.y > bottomBound - edgeSoftness) {
-      float depth = constrain(1.0 - (bottomBound - cabeza.y) / edgeSoftness, 0, 1);
-      wallNormal.y -= depth;
-      penetration = max(penetration, depth);
-    }
-
-    if (penetration > 0.01 && wallNormal.magSq() > 0.0001) {
-      wallNormal.normalize();
-      
-      // 1. ROTATIONAL DEFLECTION: Turn the head away from wall
-      //    This applies "torque" rather than instant position change
-      float headingToWall = atan2(wallNormal.y, wallNormal.x);
-      
-      // Calculate which way to turn (toward the wall normal = away from wall)
-      float turnAway = headingToWall - headAngle;
-      if (turnAway > PI) turnAway -= TWO_PI;
-      if (turnAway < -PI) turnAway += TWO_PI;
-      
-      // Apply rotational torque proportional to penetration squared (soft feel)
-      float torqueStrength = 0.12 * penetration * penetration;
-      headAngle = lerpAngle(headAngle, headAngle + turnAway * 0.4, torqueStrength);
-      
-      // 2. SLIDING FRICTION: Allow movement parallel to wall, resist perpendicular
-      float dotVelWall = PVector.dot(vel, wallNormal);
-      PVector velPerp = PVector.mult(wallNormal, dotVelWall);
-      PVector velPara = PVector.sub(vel, velPerp);
-      
-      // Dampen perpendicular velocity (into wall), preserve parallel (sliding)
-      float perpDamping = lerp(0.85, 0.3, penetration); // More penetration = more damping
-      velPerp.mult(perpDamping);
-      vel.set(PVector.add(velPara.mult(0.95), velPerp));
-      
-      // 3. SOFT PUSH: Gentle outward force, not instant teleport
-      float pushStrength = penetration * penetration * 0.6;
-      vel.add(PVector.mult(wallNormal, pushStrength));
-    }
-
-    // Reduce sideways slip so movement stays closer to heading (avoid lateral "steps")
-    if (vel.magSq() > 0.0001) {
-      float vParallel = PVector.dot(vel, headingVec);
-      PVector vParallelVec = PVector.mult(headingVec, vParallel);
-      PVector vPerp = PVector.sub(vel, vParallelVec);
-      vPerp.mult(SIDE_SLIP_DAMP);
-      vel.set(PVector.add(vParallelVec, vPerp));
-    }
-
-    // Deadband: stop tiny residual velocities from looking like nervous twitching
-    if (vel.magSq() < 0.0004) { // ~0.02^2
-      vel.set(0, 0);
-    }
-
-    // Manual movement of head based on smooth angle + velocity
-    cabeza.angulo = headAngle;
-    cabeza.x += vel.x;
-    cabeza.y += vel.y;
-    float preClampX = cabeza.x;
-    float preClampY = cabeza.y;
-    cabeza.actualizar(); // Constrain logic (hard clamp as last resort)
-    boolean clampedX = (cabeza.x != preClampX);
-    boolean clampedY = (cabeza.y != preClampY);
-    // Soft response even on hard clamp: just dampen, don't zero
-    if (clampedX) {
-      vel.x *= 0.3;
-      lastClampMsX = millis();
-    }
-    if (clampedY) {
-      vel.y *= 0.3;
-      lastClampMsY = millis();
-    }
-    if (clampedX || clampedY) vel.mult(0.7);
+    dynamics.applyThrust(dtNorm, thrustScale, contractCurve, contraction, tmpDir);
+    dynamics.applyBuoyancy(dtNorm, contraction, marginBottom);
+    dynamics.applyDrag(contractCurve, contraction, dtNorm);
+    dynamics.resolveWalls(cabeza);
+    dynamics.applySideSlipDamp(dtNorm);
+    dynamics.applyDeadband();
+    dynamics.integrateHead(cabeza);
     vel.limit(maxSpeed);
     // Update body
     float vmag = vel.mag();
-    float vnorm = constrain(vmag / maxSpeed, 0, 1);
-    float streamline = max(vnorm, contraction * 0.8);
-
-    float slowFollow = 2.2;
-    float fastFollow = 7.0;
-    float followSpeed = lerp(slowFollow, fastFollow, streamline) * followMoodScale;
-    float followPulseScale = lerp(FOLLOW_GLIDE_REDUCE, FOLLOW_CONTRACTION_BOOST, contractCurve);
-    followSpeed *= followPulseScale;
-
-    float slowTurbulence = 1.2;
-    float fastTurbulence = 0.35;
-    float turbulenceScale = lerp(slowTurbulence, fastTurbulence, streamline) * turbulenceMoodScale * baseTurbulence;
-    float bodyGlideScale = lerp(1.0, GLIDE_BODY_TURB_SCALE, glide01);
-    turbulenceScale *= bodyGlideScale;
-    debugBodyGlideScale = bodyGlideScale;
-
-    // Lateral undulation: creates swimming wave motion
-    float undulationFreq = pulseRate * 0.8; // Sync with pulse rhythm
-    float undulationPhase = t * undulationFreq * TWO_PI;
-    float speedFade = pow(constrain(vnorm, 0, 1), UNDULATION_SPEED_EXP);
-    float undulationGate = UNDULATION_MAX * (1.0 - speedFade);
-    debugUndulationGate = undulationGate;
-    float undulationStrength = vmag * 0.6 * undulationGate; // Tiny drift only
-    
-    for (int i = 1; i < segmentos.size(); i++) {
-      Segmento seg = segmentos.get(i);
-      Segmento segAnterior = segmentos.get(i - 1);
-
-      float turbulenceX = map(noise(t * 0.5, i * 0.1, noiseOffset), 0, 1, -1.5, 1.5) * turbulenceScale * jitterGate;
-      float turbulenceY = map(noise(t * 0.5, i * 0.1 + 100, noiseOffset), 0, 1, -1.5, 1.5) * turbulenceScale * jitterGate;
-
-      // Add lateral wave motion perpendicular to movement direction
-      float segmentRatio = float(i) / segmentos.size();
-      float wavePhase = undulationPhase - segmentRatio * TWO_PI; // Wave propagates down body
-      float waveAmplitude = sin(wavePhase) * undulationStrength * (1.0 - segmentRatio * 0.5);
-      
-      // Calculate perpendicular offset to movement direction
-      PVector toParent = new PVector(segAnterior.x - seg.x, segAnterior.y - seg.y);
-      if (toParent.magSq() > 0.0001) {
-        toParent.normalize();
-        PVector perpendicular = new PVector(-toParent.y, toParent.x);
-        turbulenceX += perpendicular.x * waveAmplitude;
-        turbulenceY += perpendicular.y * waveAmplitude;
-      }
-
-      seg.seguir(segAnterior.x + turbulenceX, segAnterior.y + turbulenceY, followSpeed);
-      seg.actualizar();
-    }
-
+    body.updateSegments(vmag, contractCurve, contraction, glide01, jitterGate, turnEMA);
     prevSpeed = vmag;
 
-    float deposit = wakeDeposit * (0.5 + vmag * 0.2);
-    depositWakePoint(cabeza.x, cabeza.y, deposit);
+    if (useWake || useFlow) {
+      // Pulse-synced wake: stronger during contraction, minimal during glide.
+      float cc = constrain(contractCurve, 0, 1);
+      float pulseGate = 0.10 + 0.90 * pow(cc, 1.6);
+      float deposit = wakeDeposit * (0.35 + vmag * 0.18) * pulseGate;
+      depositWakePoint(cabeza.x, cabeza.y, deposit);
+    }
   }
 
   // Contraction amount: 0..1 with contract/hold/release shaping
   float pulseShape(float phase) {
-    float c = max(0.0001, contractPortion);
-    float h = max(0.0, holdPortion);
-    float r = max(0.0001, 1.0 - c - h);
-
-    float p = wrap01(phase);
-    if (p < c) {
-      float x = p / c;
-      // Fast snap-in: ease-out
-      return 1.0 - pow(1.0 - x, 3);
-    } else if (p < c + h) {
-      return 1.0;
-    } else {
-      float x = (p - c - h) / r;
-      // Slow release: ease-in
-      return 1.0 - pow(x, 2);
-    }
+    return pulse.shape(phase);
   }
 
   // Thrust curve: only during contraction, peaking early/mid
   float pulseContractCurve(float phase) {
-    float c = max(0.0001, contractPortion);
-    float p = wrap01(phase);
-    if (p >= c) return 0;
-    float x = p / c;
-    return sin(PI * sqrt(x));
+    return pulse.contractCurve(phase);
   }
 
   void dibujarForma() {
     render.dibujarForma();
+  }
+
+  void prepararRender() {
+    render.prepareFrame();
+  }
+
+  void dibujarGlow() {
+    render.drawGlowPass();
+  }
+
+  void dibujarCore() {
+    render.drawCorePass();
   }
 
   String stateLabel() {
@@ -619,6 +483,6 @@ class Gusano {
   int baseMoodForLabel(String label) {
     if ("SHY".equals(label)) return SHY;
     if ("DOM".equals(label)) return AGGRESSIVE;
-    return CALM;
+    return SHY;
   }
 }

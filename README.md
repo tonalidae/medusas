@@ -1,21 +1,16 @@
 # muchas_medusas_nadando
 
-This sketch models a small swarm of jellyfish-like "gusanos" using an agent-based loop. The primary design pattern used is a **finite state machine (FSM)** for mood/behavior, paired with **steering-behavior blending** to compute motion.
+This sketch models a small swarm of jellyfish-like "gusanos" using an agent-based loop. The primary design pattern used is **personality-locked archetypes** (DOM or SHY) paired with **steering-behavior blending** to compute motion.
 
-## Design Pattern: Finite State Machine (FSM)
+## Design Pattern: Personality-Locked Archetypes
 
-Each `Gusano` is a stateful agent with five discrete moods:
-`CALM`, `CURIOUS`, `SHY`, `FEAR`, `AGGRESSIVE`.
+Each `Gusano` is born as either `DOM` (aggressive) or `SHY`, and stays in that base state for the entire run. Mood switching is disabled, which keeps behavior consistent and avoids state churn.
 
-The FSM is implemented in `Gusano.pde`:
+This still uses the same blending pipeline:
 
-- **State storage**: `state`, `stateTimer`, `stateDuration`, `stateCooldown`.
-- **Transitions**: `updateState()` decides when to switch moods (timers, startle spikes, random fear, cooldowns).
-- **Entry actions**: `setState()` logs transitions and resets timers and blend targets.
-- **State-driven parameters**: `applyMood()` blends target swim parameters (pulse, drag, turn, turbulence) based on the current mood.
-- **State-driven visuals**: `paletteForState()` and `updateColor()` map mood to color.
-
-This keeps high-level behavior changes isolated from low-level physics and rendering, making it easy to add new moods or tune existing ones.
+- **State storage**: `state`, `stateTimer` (locked to base mood).
+- **State-driven parameters**: `applyMood()` blends target swim parameters (pulse, drag, turn, turbulence) based on the base personality.
+- **State-driven visuals**: `paletteForState()` and `updateColor()` map personality to color.
 
 ## Design Pattern: Steering Behavior Blending
 
@@ -33,7 +28,7 @@ This acts like a **strategy bundle**: each steering rule is an independent strat
 
 1. Update global wake grid and spatial grid.
 2. For each `Gusano`:
-   - Update state (FSM).
+   - Enforce base personality state.
    - Blend mood parameters.
    - Compute steering and apply physics.
    - Update body segments.
@@ -41,4 +36,4 @@ This acts like a **strategy bundle**: each steering rule is an independent strat
 
 ## Why This Pattern
 
-The FSM provides clear, discrete "emotional" modes, while steering blending lets each mode express a different mix of forces. Together they keep the code readable and make the agents feel alive without complex pathfinding or scripted motion.
+The locked archetypes provide stable, contrasting behaviors, while steering blending lets each archetype express a different mix of forces. Together they keep the code readable and make the agents feel alive without complex pathfinding or scripted motion.

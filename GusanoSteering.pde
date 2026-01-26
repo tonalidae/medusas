@@ -1,12 +1,37 @@
+// --- Pulse-locked steering tuning ---
+// Lower = less steering during glide (relaxation). Higher = more constant steering.
+final float STEER_GLIDE_MIN = 0.04;
+// Exponent shaping for how quickly steering ramps up during contraction.
+// Higher = steering is concentrated near peak contraction.
+final float STEER_GLIDE_EXP = 2.2;
+
 class GusanoSteering {
   Gusano g;
+  ArrayList<Gusano> neighborsScratch = new ArrayList<Gusano>();
+  final PVector desired = new PVector(0, 0);
+  final PVector forward = new PVector(0, 0);
+  final PVector toMouse = new PVector(0, 0);
+  final PVector sep = new PVector(0, 0);
+  final PVector coh = new PVector(0, 0);
+  final PVector align = new PVector(0, 0);
+  final PVector orbit = new PVector(0, 0);
+  final PVector toOther = new PVector(0, 0);
+  final PVector away = new PVector(0, 0);
+  final PVector perp = new PVector(0, 0);
+  final PVector wallForce = new PVector(0, 0);
+  final PVector tmp = new PVector(0, 0);
+  final PVector flow = new PVector(0, 0);
+  final PVector grad = new PVector(0, 0);
+  final PVector toTarget = new PVector(0, 0);
+  final PVector heading = new PVector(0, 0);
+  final PVector aggro = new PVector(0, 0);
 
   GusanoSteering(Gusano g) {
     this.g = g;
   }
 
   PVector computeSteering(Segmento cabeza) {
-    PVector desired = new PVector(0, 0);
+    desired.set(0, 0);
 
     resetDebugSteer();
     g.debugWanderScale = 1.0;
@@ -23,61 +48,61 @@ class GusanoSteering {
     
     // --- 1. SENSORY PARAMETERS (Rain World Style) ---
     float viewAngle = cos(radians(70)); // 140-degree field of vision
-    int attentionBudget = 2;           // Only focus on the 2 closest neighbors
+    int attentionBudget = 2;           // Only focus on the 2 closest neighbors (will grow when busy)
     float wallMarginX = clampMarginX;  // Soft cushion margin
     float wallMarginTop = clampMarginTop;
     float wallMarginBottom = clampMarginBottom;
     float neighborSenseRadius = 180;
     float sepRadius = 55;
+    float alignRadius = ALIGN_RADIUS;
     
     // === BIOLOGICAL CONSTRAINT: Pulsed Steering ===
     // Jellyfish primarily steer during propulsion phase, not while coasting.
     // Calculate phase gate early so all steering forces can use it.
     float contractCurve = g.pulseContractCurve(g.pulsePhase);
-    float steerPhaseGate = lerp(0.2, 1.0, contractCurve); // Minimal steering during coast
+    // Jellyfish steer primarily during propulsion (contraction), not while coasting.
+    // Use a steep gate: near-zero steering in glide, strong steering in contraction.
+    float cc = constrain(contractCurve, 0, 1);
+    float steerPhaseGate = STEER_GLIDE_MIN + (1.0 - STEER_GLIDE_MIN) * pow(cc, STEER_GLIDE_EXP);
     
-    // Weights based on Mood
-    float wanderW = (g.state == Gusano.CALM) ? 2.4 : 1.2;
-    float avoidW = (g.state == Gusano.FEAR) ? 5.0 : 1.8;
-    float sepW = (g.state == Gusano.SHY || g.state == Gusano.FEAR) ? 2.8 : 1.2;
+    // Weights based on archetype (SHY vs AGGRESSIVE)
+    float wanderW = 1.6;
+    float avoidW = 1.8;
+    float sepW = (g.state == Gusano.SHY) ? 2.4 : 1.2;
     float mouseSenseDist = 350;
 
-    PVector forward = new PVector(cos(g.headAngle), sin(g.headAngle));
+    forward.set(cos(g.headAngle), sin(g.headAngle));
 
-    // --- 2. USER AS ORGANISM (Fear/Curiosity) ---
+    // --- 2. USER AS ORGANISM ---
     // The user is no longer a "hack"—the medusa "sees" the mouse
-    // Fear can partially override phase gating (survival instinct)
     float dMouse = dist(cabeza.x, cabeza.y, mouseX, mouseY);
     if (dMouse < mouseSenseDist) {
-      PVector toMouse = new PVector(mouseX - cabeza.x, mouseY - cabeza.y);
+      toMouse.set(mouseX - cabeza.x, mouseY - cabeza.y);
       toMouse.normalize();
 
-      // Fear gets partial phase bypass (survival)
-      float fearPhaseGate = (g.state == Gusano.FEAR) ? lerp(0.6, 1.0, contractCurve) : steerPhaseGate;
-      
-      if (g.state == Gusano.FEAR || (mousePressed && dMouse < 100)) {
-        PVector m = PVector.mult(toMouse, -6.0 * fearPhaseGate);
-        desired.add(m); // Flee from predator
-        g.debugSteerMouse.set(m);
-      } else if (g.state == Gusano.CURIOUS && mouseSpeed < 4) {
-        PVector m = PVector.mult(toMouse, 0.7 * steerPhaseGate);
-        desired.add(m);  // Approach strange still object
-        g.debugSteerMouse.set(m);
+      if (mousePressed && dMouse < 100) {
+        tmp.set(toMouse).mult(-6.0 * steerPhaseGate);
+        desired.add(tmp); // Flee from predator (direct interaction only)
+        g.debugSteerMouse.set(tmp);
       }
     }
 
     // --- 3. NEIGHBOR FILTERING (FOV & Attention) ---
     // Prevents network instability by limiting focus to immediate vicinity
-    ArrayList<Gusano> neighbors = queryNeighbors(cabeza.x, cabeza.y);
+    queryNeighbors(cabeza.x, cabeza.y, neighborsScratch);
     int processed = 0;
+    // Dynamic attention: increase budget when crowding is high
+    float crowd = min(1.0, neighborsScratch.size() / (float)ATTN_MAX);
+    attentionBudget = (int)ceil(lerp(ATTN_MIN, ATTN_MAX, pow(crowd, 0.6)));
     float fleeRadius = 220;
     float fleeRadiusSq = fleeRadius * fleeRadius;
     Gusano nearestDominant = null;
     float bestDominantD2 = 1e9;
     
-    PVector sep = new PVector(0, 0);
-    PVector coh = new PVector(0, 0);
-    for (Gusano other : neighbors) {
+    sep.set(0, 0);
+    coh.set(0, 0);
+    align.set(0, 0);
+    for (Gusano other : neighborsScratch) {
       if (other == g || processed >= attentionBudget) continue;
       
       Segmento oHead = other.segmentos.get(0);
@@ -100,43 +125,55 @@ class GusanoSteering {
           nearestDominant = other;
         }
       }
-      PVector toOther = new PVector(oHead.x - cabeza.x, oHead.y - cabeza.y);
+      toOther.set(oHead.x - cabeza.x, oHead.y - cabeza.y);
       float d = toOther.mag();
       if (d > neighborSenseRadius || d < 0.1) continue;
       toOther.normalize();
 
       // Separation: Tactile sense (360 degrees) - phase-gated
       if (d < sepRadius) {
-        PVector away = PVector.mult(toOther, -sepW * (1.0 - d / sepRadius) * steerPhaseGate);
-        sep.add(away);
+        tmp.set(toOther).mult(-sepW * (1.0 - d / sepRadius) * steerPhaseGate);
+        sep.add(tmp);
       } 
       // Cohesion: Visual sense (Frontal Cone Only) - phase-gated
       else if (forward.dot(toOther) > viewAngle) {
-        PVector toward = PVector.mult(toOther, 0.4 * steerPhaseGate);
-        coh.add(toward);
+        tmp.set(toOther).mult(0.4 * steerPhaseGate);
+        coh.add(tmp);
         processed++; 
+      }
+      // Alignment: match heading with nearby visible neighbors (weighted by distance)
+      if (d < alignRadius && forward.dot(toOther) > -0.2) { // allow slightly behind
+        PVector oVel = other.vel;
+        if (oVel != null && oVel.magSq() > 0.0001) {
+          float w = pow(constrain(1.0 - d / alignRadius, 0, 1), ALIGN_FALLOFF_EXP);
+          tmp.set(oVel).normalize().mult(w * steerPhaseGate);
+          align.add(tmp);
+        }
       }
     }
     desired.add(sep);
     desired.add(coh);
+    align.mult(ALIGN_WEIGHT);
+    desired.add(align);
     g.debugSteerSep.set(sep);
     g.debugSteerCoh.set(coh);
-    g.debugSteerNeighbors.set(sep.x + coh.x, sep.y + coh.y);
+    g.debugSteerAlign.set(align);
+    g.debugSteerNeighbors.set(sep.x + coh.x + align.x, sep.y + coh.y + align.y);
 
     // --- 3b. Shy flee boost when a dominant is nearby ---
     // Flee gets partial phase bypass (survival instinct)
-    float fleePhaseGate = lerp(0.5, 1.0, contractCurve);
+    float fleePhaseGate = lerp(0.5, 1.0, cc);
     if (g.baseMood == Gusano.SHY && nearestDominant != null) {
       Segmento threatHead = nearestDominant.segmentos.get(0);
-      PVector away = new PVector(cabeza.x - threatHead.x, cabeza.y - threatHead.y);
+      away.set(cabeza.x - threatHead.x, cabeza.y - threatHead.y);
       float d2 = away.magSq();
       if (d2 > 0.0001) {
         float d = sqrt(d2);
         float tFlee = constrain(1.0 - (d / fleeRadius), 0, 1);
         away.normalize();
         float fleeStrength = lerp(0.8, 2.2, tFlee);
-        PVector flee = PVector.mult(away, fleeStrength * 2.0 * fleePhaseGate);
-        desired.add(flee);
+        tmp.set(away).mult(fleeStrength * 2.0 * fleePhaseGate);
+        desired.add(tmp);
       }
     }
 
@@ -148,16 +185,17 @@ class GusanoSteering {
       boolean gLoses = gIsSmaller || (equalSize && g.id < nearestDominant.id);
       if (gLoses) {
         // Loser yields: step away + small lateral sidestep (phase-gated)
-        PVector away = new PVector(cabeza.x - threatHead.x, cabeza.y - threatHead.y);
+        away.set(cabeza.x - threatHead.x, cabeza.y - threatHead.y);
         float d2 = away.magSq();
         if (d2 > 0.0001) {
           float d = sqrt(d2);
           float tYield = constrain(1.0 - (d / fleeRadius), 0, 1);
           away.normalize();
-          PVector perp = new PVector(-away.y, away.x);
-          PVector yieldVec = PVector.mult(away, lerp(0.6, 1.6, tYield));
-          yieldVec.add(PVector.mult(perp, lerp(0.2, 0.8, tYield)));
-          desired.add(PVector.mult(yieldVec, 2.0 * fleePhaseGate));
+          perp.set(-away.y, away.x);
+          tmp.set(away).mult(lerp(0.6, 1.6, tYield));
+          tmp.add(perp.mult(lerp(0.2, 0.8, tYield)));
+          tmp.mult(2.0 * fleePhaseGate);
+          desired.add(tmp);
         }
       }
       // Winner continues without extra force.
@@ -166,8 +204,8 @@ class GusanoSteering {
     // --- 4. QUADRATIC WALL STEERING ---
     // Replaces hard-coded "vel.x += 0.2" with smooth arcing avoidance
     // Wall avoidance gets partial phase bypass (survival)
-    float wallPhaseGate = lerp(0.5, 1.0, contractCurve);
-    PVector wallForce = new PVector(0, 0);
+    float wallPhaseGate = lerp(0.5, 1.0, cc);
+    wallForce.set(0, 0);
     if (cabeza.x < wallMarginX) wallForce.x += sq(1.0 - cabeza.x / wallMarginX);
     if (cabeza.x > width - wallMarginX) wallForce.x -= sq(1.0 - (width - cabeza.x) / wallMarginX);
     if (cabeza.y < wallMarginTop) wallForce.y += sq(1.0 - cabeza.y / wallMarginTop);
@@ -177,11 +215,55 @@ class GusanoSteering {
     float wallMag = wallForce.mag();
     if (wallMag > 0.0001) {
       wallForce.normalize();
-      PVector w = PVector.mult(wallForce, avoidW * 3.5 * wallPhaseGate);
-      desired.add(w);
-      g.debugSteerWall.set(w);
+      tmp.set(wallForce).mult(avoidW * 3.5 * wallPhaseGate);
+      desired.add(tmp);
+      g.debugSteerWall.set(tmp);
       // Reduce wander near walls so turn is decisive
       wanderW *= 0.6;
+    }
+
+    // --- 4b. WAKE/FLOW ENVIRONMENT ---
+    // Flow: ambient current field.
+    if (useFlow) {
+      sampleFlow(cabeza.x, cabeza.y, flow);
+      float flowMagSq = flow.magSq();
+      if (flowMagSq > 0.0001) {
+        if (flowMagSq > FLOW_MAX_FORCE * FLOW_MAX_FORCE) {
+          flow.normalize();
+          flow.mult(FLOW_MAX_FORCE);
+        }
+        if (FLOW_PERP_SCALE < 0.999) {
+          float along = PVector.dot(flow, forward);
+          tmp.set(forward).mult(along);
+          perp.set(flow).sub(tmp);
+          perp.mult(FLOW_PERP_SCALE);
+          flow.set(tmp).add(perp);
+        }
+        flow.mult(FLOW_STEER_SCALE * steerPhaseGate);
+        desired.add(flow);
+      }
+    }
+
+    // Wake gradient: SHY avoids, DOM (AGGRESSIVE) follows.
+    if (useWake) {
+      float wakeSign = 0.0;
+      if (g.baseMood == Gusano.SHY) {
+        wakeSign = -1.0;
+      } else if (g.baseMood == Gusano.AGGRESSIVE) {
+        wakeSign = 1.0;
+      }
+      if (abs(wakeSign) > 0.0001) {
+        sampleWakeGradient(cabeza.x, cabeza.y, grad);
+        float gradMagSq = grad.magSq();
+        if (gradMagSq > 0.0001) {
+          if (gradMagSq > WAKE_MAX_FORCE * WAKE_MAX_FORCE) {
+            grad.normalize();
+            grad.mult(WAKE_MAX_FORCE);
+          }
+          grad.mult(WAKE_STEER_SCALE * wakeSign * steerPhaseGate);
+          desired.add(grad);
+        }
+      }
     }
 
     float glide01 = 1.0 - contractCurve;
@@ -191,17 +273,17 @@ class GusanoSteering {
     // --- 5. WANDER (Organic Drift) --- phase-gated via glideSteerScale + steerPhaseGate
     float nx = noise(g.noiseOffset, t * 0.06) - 0.5;
     float ny = noise(g.noiseOffset + 500, t * 0.06) - 0.5;
-    PVector wander = new PVector(nx, ny).mult(wanderW * glideSteerScale * steerPhaseGate);
-    desired.add(wander);
-    g.debugSteerWander.set(wander);
+    tmp.set(nx, ny).mult(wanderW * glideSteerScale * steerPhaseGate);
+    desired.add(tmp);
+    g.debugSteerWander.set(tmp);
 
     // --- 6. LATERAL SWAY (Natural horizontal variation) --- phase-gated
     // Adds gentle sideways drift so motion isn't synchronized or strictly forward.
     float sway = (noise(g.noiseOffset + 2000, t * 0.15) - 0.5) * 2.0;
-    PVector perp = new PVector(-forward.y, forward.x);
-    PVector swayVec = PVector.mult(perp, sway * 0.35 * glideSteerScale * steerPhaseGate);
-    desired.add(swayVec);
-    g.debugSteerSway.set(swayVec);
+    perp.set(-forward.y, forward.x);
+    tmp.set(perp).mult(sway * 0.35 * glideSteerScale * steerPhaseGate);
+    desired.add(tmp);
+    g.debugSteerSway.set(tmp);
 
     return desired;
   }
@@ -222,12 +304,18 @@ class GusanoSteering {
     if (target == null) {
       g.aggroLockMs = -9999;
       g.aggroPounceReady = false;
-      return new PVector(0, 0);
+      aggro.set(0, 0);
+      return aggro;
     }
+
+    float dtNorm = ((simDt > 0) ? simDt : (1.0 / max(1, frameRate))) * 60.0;
     
     Segmento targetHead = target.segmentos.get(0);
-    PVector toTarget = new PVector(targetHead.x - cabeza.x, targetHead.y - cabeza.y);
-    if (toTarget.magSq() < 0.0001) return new PVector(0, 0);
+    toTarget.set(targetHead.x - cabeza.x, targetHead.y - cabeza.y);
+    if (toTarget.magSq() < 0.0001) {
+      aggro.set(0, 0);
+      return aggro;
+    }
     toTarget.normalize();
     
     // Pause-and-pounce: when first spotting target, pause briefly before attacking
@@ -243,16 +331,18 @@ class GusanoSteering {
     if (timeSinceLock < g.aggroPauseTime) {
       g.aggroPounceReady = false;
       // Slight drift toward target during pause
-      return PVector.mult(toTarget, 0.3);
+      aggro.set(toTarget).mult(0.3);
+      return aggro;
     }
     
     // After pause: sudden acceleration burst
     if (!g.aggroPounceReady) {
       g.aggroPounceReady = true;
       // Add extra impulse on first pounce frame, aligned to heading
-      PVector heading = new PVector(cos(g.headAngle), sin(g.headAngle));
+      heading.set(cos(g.headAngle), sin(g.headAngle));
       float align = max(0.0, PVector.dot(heading, toTarget));
-      g.vel.add(PVector.mult(heading, 2.5 * align));
+      tmp.set(heading).mult(2.5 * align * dtNorm);
+      g.vel.add(tmp);
     }
     
     // Pulse-synchronized chase: only thrust during contraction phase
@@ -267,14 +357,15 @@ class GusanoSteering {
     float pounceBoost = timeSinceLock < (g.aggroPauseTime + 1.0) ? 1.3 : 1.0;
     float chaseMagnitude = rhythmGate * attackIntensity * 2.8 * pounceBoost;
     
-    return PVector.mult(toTarget, chaseMagnitude);
+    aggro.set(toTarget).mult(chaseMagnitude);
+    return aggro;
   }
 
   Gusano resolveAggroTarget(Segmento cabeza) {
     float maxDist = 180;
     float maxDistSq = maxDist * maxDist;
     float fovCos = cos(radians(60));
-    PVector forward = new PVector(cos(g.headAngle), sin(g.headAngle));
+    forward.set(cos(g.headAngle), sin(g.headAngle));
 
     if (g.aggroTargetId >= 0) {
       Gusano current = findGusanoById(g.aggroTargetId);
@@ -286,8 +377,8 @@ class GusanoSteering {
 
     Gusano best = null;
     float bestD2 = 1e9;
-    ArrayList<Gusano> neighbors = queryNeighbors(cabeza.x, cabeza.y);
-    for (Gusano other : neighbors) {
+    queryNeighbors(cabeza.x, cabeza.y, neighborsScratch);
+    for (Gusano other : neighborsScratch) {
       if (other == g) continue;
       if (!isAggroTargetValid(cabeza, other, maxDistSq, fovCos, forward)) continue;
       Segmento otherHead = other.segmentos.get(0);
