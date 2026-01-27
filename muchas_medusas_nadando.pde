@@ -1,3 +1,23 @@
+// --- Water ripple texture (Option A: animated overlay) ---
+PGraphics waterTex;
+float waterT = 0;
+final float WATER_TEX_SCALE = 0.5; // render at half res for speed
+PImage[] waterFrames;
+int waterFrameCount = 0;
+int waterFrameIndex = 0;
+float waterFrameAccum = 0;
+int waterLastMs = 0;
+boolean waterFramesAvailable = false;
+boolean waterFramesWarned = false;
+
+// Simple controls
+boolean useWaterFrames = true;
+boolean showWaterTex = true;
+// Blend mode choice: false -> BLEND (subtle), true -> SCREEN (gentle brighten)
+boolean useScreenBlend = false;
+float waterAlpha = 25; // tint alpha when drawing overlay (0-255) — lowered for greater transparency
+float waterFPS = 12.0;
+
 ArrayList<Gusano> gusanos;
 int numGusanos = 7;
 int numSegmentos = 30;
@@ -20,6 +40,11 @@ boolean debugJumps = false;
 boolean AUTO_HEAL_NANS = false;
 boolean debugCycles = false;
 boolean debugBiologicalVectors = false;
+
+
+
+
+
 
 // --- Jelly motion tuning (minimal, reversible knobs) ---
 // Tuning notes:
@@ -113,9 +138,17 @@ HashMap<Long, ArrayList<Gusano>> spatialGrid = new HashMap<Long, ArrayList<Gusan
 float gridCellSize = 260;
 
 void setup() {
-  size(1280, 800);
+  size(1280, 800, P2D);
   stroke(0, 66);
-  background(255);
+
+  // Init water texture buffer (half-res, scaled up)
+  int tw = max(1, int(width * WATER_TEX_SCALE));
+  int th = max(1, int(height * WATER_TEX_SCALE));
+  waterTex = createGraphics(tw, th, P2D);
+  waterTex.noSmooth();
+
+  loadWaterFrames();
+  waterLastMs = millis();
 
   initWakeGrid();
 
@@ -130,8 +163,33 @@ void setup() {
 }
 
 void draw() {
-  background(255);
+  background(#050008);
   t = millis() * timeScale;
+
+  // Draw water overlay (either frames or procedural half-res buffer)
+  if (showWaterTex) {
+    // Choose blend: BLEND for subtle alpha compositing, SCREEN for gentle brightening
+      blendMode(BLEND);
+    tint(255, waterAlpha);
+    if (useWaterFrames && waterFramesAvailable && waterFrameCount > 0) {
+      int idx = advanceWaterFrame();
+      PImage frame = waterFrames[idx];
+      if (frame != null) {
+        image(frame, 0, 0, width, height);
+      }
+    } else {
+      if (useWaterFrames && !waterFramesAvailable) {
+        useWaterFrames = false;
+        warnMissingWaterFrames();
+      }
+      updateWaterTexture();
+      if (waterTex != null) {
+        image(waterTex, 0, 0, width, height);
+      }
+    }
+    noTint();
+    blendMode(BLEND);
+  }
 
   mouseSpeed = dist(mouseX, mouseY, lastMouseX, lastMouseY);
   lastMouseX = mouseX;
@@ -264,6 +322,105 @@ void reiniciarGusanos() {
     color c = color(0, 66); // Todos los gusanos son negros
     gusanos.add(new Gusano(x, y, c, i));
   }
+}
+
+
+
+
+// --- Water texture helpers ---
+void updateWaterTexture() {
+  if (waterTex == null) return;
+  waterT += 0.01;
+
+  waterTex.beginDraw();
+  waterTex.noStroke();
+  // Transparent background (keeps overlay subtle)
+  waterTex.background(0, 0);
+
+  waterTex.loadPixels();
+  int wT = waterTex.width;
+  int hT = waterTex.height;
+
+  // Tune these for different ripple scales
+  float s = 0.012; // spatial scale
+  float t1 = waterT * 1.20;
+  float t2 = waterT * 1.00;
+  float t3 = waterT * 0.70;
+  float tn = waterT * 0.40;
+
+  for (int y = 0; y < hT; y++) {
+    float ny = y * s;
+    for (int x = 0; x < wT; x++) {
+      float nx = x * s;
+
+      float w1 = sin(nx * 3.0 + t1);
+      float w2 = sin(ny * 2.5 - t2);
+      float w3 = sin((nx + ny) * 2.0 + t3);
+      float n  = noise(nx, ny, tn);
+
+      float v = (w1 + w2 + w3) * 0.25 + (n - 0.5) * 0.6; // ~[-1..1]
+      v = constrain(v * 0.5 + 0.5, 0, 1); // -> [0..1]
+
+      // Subtle caustics: render as grayscale so overlay doesn't tint scene
+      int a = int(10 + 35 * v);
+      int gray = int(constrain(10 + 220.0 * v, 0, 255));
+      waterTex.pixels[y * wT + x] = color(gray, gray, gray, a);
+    }
+  }
+
+  waterTex.updatePixels();
+  waterTex.endDraw();
+}
+
+void loadWaterFrames() {
+  ArrayList<PImage> frames = new ArrayList<PImage>();
+  int i = 0;
+  while (true) {
+    String filename = "water_texture/" + nf(i, 4) + ".png";
+    PImage img = loadImage(filename);
+    if (img == null) break;
+    // convert loaded frame to grayscale in-memory so overlay remains neutral
+    img.filter(GRAY);
+    frames.add(img);
+    i++;
+  }
+  if (frames.size() == 0) {
+    waterFramesAvailable = false;
+    waterFrames = null;
+    if (useWaterFrames) {
+      useWaterFrames = false;
+    }
+    warnMissingWaterFrames();
+    return;
+  }
+  waterFrames = frames.toArray(new PImage[frames.size()]);
+  waterFrameCount = waterFrames.length;
+  waterFramesAvailable = true;
+}
+
+int advanceWaterFrame() {
+  if (waterFrameCount == 0) return 0;
+  int now = millis();
+  if (waterLastMs == 0) {
+    waterLastMs = now;
+    return waterFrameIndex;
+  }
+  float dt = (now - waterLastMs) / 1000.0;
+  waterLastMs = now;
+  if (waterFPS <= 0) return waterFrameIndex;
+  waterFrameAccum += dt * waterFPS;
+  int advance = int(waterFrameAccum);
+  if (advance > 0) {
+    waterFrameIndex = (waterFrameIndex + advance) % waterFrameCount;
+    waterFrameAccum -= advance;
+  }
+  return waterFrameIndex;
+}
+
+void warnMissingWaterFrames() {
+  if (waterFramesWarned) return;
+  println("[WARN] Missing water texture frames in data/water_texture; falling back to procedural water.");
+  waterFramesWarned = true;
 }
 
 // --- Spatial grid helpers ---
@@ -532,15 +689,7 @@ void debugMoodSummaryTick() {
     }
   }
   float avgPer = changesTotal / (float)max(1, gusanos.size());
-  // println("[MOOD_SUM] frame=" + frameCount +
-  //         " changesTotal=" + changesTotal +
-  //         " avgPer=" + nf(avgPer, 0, 1) +
-  //         " states: CALM=" + calmCount +
-  //         " CUR=" + curiousCount +
-  //         " SHY=" + shyCount +
-  //         " FEAR=" + fearCount +
-  //         " AGG=" + aggressiveCount +
-  //         " stabilize=" + (STABILIZE_MOOD ? "1" : "0"));
+
 }
 
 void drawVecArrow(float x, float y, PVector v, float scale, int alpha, String label) {
