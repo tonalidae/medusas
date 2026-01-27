@@ -1,4 +1,8 @@
-// --- Water ripple texture (Option A: animated overlay) ---
+
+import oscP5.*;
+import netP5.*;
+
+
 PGraphics waterTex;
 float waterT = 0;
 final float WATER_TEX_SCALE = 0.5; // render at half res for speed
@@ -17,6 +21,22 @@ boolean showWaterTex = true;
 boolean useScreenBlend = false;
 float waterAlpha = 25; // tint alpha when drawing overlay (0-255) — lowered for greater transparency
 float waterFPS = 12.0;
+OscP5 oscP5;
+
+float remoteX = -1000;
+float remoteY = -1000;
+float remoteSmoothX = -1000;
+float remoteSmoothY = -1000;
+
+// --- VOLUMETRIC INTERACTION VARS ---
+// Stores previous positions for up to 6 tracked points to calculate velocity
+PVector[] prevHandPoints = new PVector[6]; 
+
+boolean handPresent = false;
+int lastHandTime = 0;
+
+int HAND_TIMEOUT_MS = 1000;
+
 
 ArrayList<Gusano> gusanos;
 int numGusanos = 7;
@@ -139,6 +159,8 @@ float gridCellSize = 260;
 
 void setup() {
   size(1280, 800, P2D);
+  oscP5 = new OscP5(this, 12000);
+println("[OSC] Listening on port 12000");
   stroke(0, 66);
 
   // Init water texture buffer (half-res, scaled up)
@@ -197,8 +219,35 @@ void draw() {
 
   updateWakeGrid();
   rebuildSpatialGrid();
-  if (mousePressed || mouseSpeed > 12) {
+  // 1. Hand Timeout
+  if (millis() - lastHandTime > HAND_TIMEOUT_MS) {
+    handPresent = false;
+    // Reset points so the next touch doesn't create a "teleport" splash
+    for(int i=0; i<prevHandPoints.length; i++) prevHandPoints[i] = null;
+  }
+
+  // 2. Mouse Fallback (Only works if no hand is detected)
+  // This lets you test with mouse when the camera isn't running
+  if (!handPresent && (mousePressed || mouseSpeed > 12)) {
     depositWakeBlob(mouseX, mouseY, 70, userDeposit);
+  }
+
+  // Visualize interaction points (when present)
+  if (handPresent) {
+    pushStyle();
+    // Draw a slightly translucent marker and label for each tracked point
+    for (int i = 0; i < prevHandPoints.length; i++) {
+      PVector p = prevHandPoints[i];
+      if (p != null) {
+        noStroke();
+        fill(255, 200, 50, 160);
+        ellipse(p.x, p.y, 18, 18);
+        fill(0, 200);
+        textSize(12);
+        text((i+1) + "", p.x + 8, p.y - 8);
+      }
+    }
+    popStyle();
   }
   if (debugWake) {
     drawWakeGrid();
@@ -907,4 +956,40 @@ void drawBiologicalVectorDebug() {
   fill(0, 150); text("● = alignment", lx, ly + 58);
   
   popStyle();
+  }
+
+// --- OSC EVENT: VOLUMETRIC HAND TRACKING ---
+void oscEvent(OscMessage msg) {
+  // Accept variable-length argument lists under /hand
+  if (msg.checkAddrPattern("/hand")) {
+    handPresent = true;
+    lastHandTime = millis();
+
+    int pointIndex = 0;
+
+    // Loop through arguments in pairs: [x1, y1, x2, y2, ...]
+    Object[] args = msg.arguments();
+    if (args == null) return;
+    for (int i = 0; i < args.length; i += 2) {
+      if (i + 1 >= args.length) break;
+
+      float x = msg.get(i).floatValue() * width;
+      float y = msg.get(i + 1).floatValue() * height;
+
+      if (prevHandPoints[pointIndex] == null) {
+        prevHandPoints[pointIndex] = new PVector(x, y);
+      }
+
+      float speed = dist(x, y, prevHandPoints[pointIndex].x, prevHandPoints[pointIndex].y);
+      if (speed > 2.0) {
+        float radius = map(speed, 0, 60, 25, 65);
+        float force = map(speed, 0, 60, 0.5, 2.5);
+        depositWakeBlob(x, y, radius, userDeposit * 0.4 * force);
+      }
+
+      prevHandPoints[pointIndex].set(x, y);
+      pointIndex++;
+      if (pointIndex >= prevHandPoints.length) break;
+    }
+  }
 }
