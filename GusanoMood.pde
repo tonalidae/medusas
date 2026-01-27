@@ -129,7 +129,7 @@ class GusanoMood {
     g.drag = constrain(lerp(g.drag, targetDrag, smooth), 0.85, 0.99);
     g.sinkStrength = max(0.0, lerp(g.sinkStrength, targetSink, smooth));
     g.buoyancyLift = g.sinkStrength * 0.3;
-    g.turnRate = constrain(lerp(g.turnRate, targetTurn, smooth), 0.015, 0.15);
+    g.turnRate = constrain(lerp(g.turnRate, targetTurn, smooth), 0.015, 0.22);  // Increased from 0.15
     g.followMoodScale = lerp(g.followMoodScale, targetFollowScale, smooth);
     g.turbulenceMoodScale = lerp(g.turbulenceMoodScale, targetTurbScale, smooth);
     g.headNoiseScale = lerp(g.headNoiseScale, targetHeadNoise, smooth);

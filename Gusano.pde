@@ -28,6 +28,10 @@ class Gusano {
   float holdPortion;
   float sinkStrength;
   float buoyancyLift;
+  
+  // Species-aware body dynamics scaling
+  float bodyFollowScale;
+  float bodyUndulationScale;
 
   // Personality bases (per-jelly defaults)
   float basePulseRate;
@@ -85,8 +89,8 @@ class Gusano {
   int arcLastTriggerMs = -9999;
 
   // Distances are in pixels (tune live)
-  float arcSpotRadius = 220;
-  float arcLoseRadius = 290;
+  float arcSpotRadius = 280;  // Increased from 220 for earlier flee response
+  float arcLoseRadius = 360;  // Increased from 290 for longer flee commitment
 
   // Timing (milliseconds)
   int arcMinHoldMs = 650;      // minimum time to commit to flee/chase
@@ -171,7 +175,7 @@ class Gusano {
 
     // Personality base values (some of these are set after label is chosen)
     baseSinkStrength = random(0.04, 0.10);
-    baseTurnRate = random(0.055, 0.095); // Higher turn rate for curves (nudged up)
+    baseTurnRate = random(0.085, 0.135); // Increased from 0.055-0.095 for fuller turns
     baseTurbulence = random(0.9, 1.2);
     sizeFactor = random(0.85, 1.15);
 
@@ -238,17 +242,26 @@ class Gusano {
     // Species controls cadence; this block only scales displacement/feel.
     if ("CUBO".equals(speciesLabel)) {
       // Fast pumping: reduce per-pulse displacement a bit less and add less damping
-      basePulseStrength *= random(0.45, 0.65);  // slightly stronger pulses
+      basePulseStrength *= random(0.55, 0.70);  // increased from 0.45-0.65 for better flow
       baseDrag += random(0.015, 0.05);          // reduce added drag
       maxSpeed *= random(0.62, 0.72);
+      // Body dynamics: faster follow for rapid pulses, less wave (already pumping fast)
+      bodyFollowScale = 1.35;
+      bodyUndulationScale = 0.75;
     } else if ("EPHYRA".equals(speciesLabel)) {
       // Juvenile flutter: keep frequent pulses but allow more displacement and less drag
       basePulseStrength *= random(0.33, 0.50);
       baseDrag += random(0.03, 0.07);
       maxSpeed *= random(0.55, 0.70);
+      // Body dynamics: balanced for flutter
+      bodyFollowScale = 1.15;
+      bodyUndulationScale = 1.0;
     } else {
       // ROWER: keep as-is (slow cadence already reads well).
       maxSpeed *= random(0.95, 1.05);
+      // Body dynamics: slower follow for long glides, more wave to compensate
+      bodyFollowScale = 0.85;
+      bodyUndulationScale = 1.2;
     }
 
     // Global cadence control (post-species, pre-clamp)
@@ -426,8 +439,8 @@ class Gusano {
     float maxTurn = MAX_TURN_RAD * dtNorm;
     diff = constrain(diff, -maxTurn, maxTurn);
     float limitedAngle = headAngle + diff;
-    // Turn mostly during contraction; coast keeps heading steadier
-    float turnGate = lerp(0.25, 1.0, constrain(contractNow, 0, 1));
+    // Turn more freely: reduce contraction gating so turns complete smoothly
+    float turnGate = lerp(0.55, 1.0, constrain(contractNow, 0, 1));  // Increased from 0.25-1.0
     float turnAlpha = dtAlpha(turnRate * turnGate, dt);
     headAngle = lerpAngle(headAngle, limitedAngle, turnAlpha);
 

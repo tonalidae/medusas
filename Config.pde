@@ -63,7 +63,7 @@ float CYCLE_EMA_ALPHA = 0.2; // Rolling average smoothing for cycle debug
 float STEER_SMOOTH_ALPHA = 0.16; // Slightly smoother turns
 float STEER_FLIP_DOT = -0.2; // If desired steer points opposite, damp the flip
 float STEER_FLIP_SLOW = 0.15; // Extra damping factor on flips
-float MAX_TURN_RAD = 0.28; // Max turn per frame (~16 deg)
+float MAX_TURN_RAD = 0.45; // Max turn per frame (~26 deg) - increased from 0.28 for fuller turns
 
 
 // --- Stability tuning (multi-agent robustness) ---

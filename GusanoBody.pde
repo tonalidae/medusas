@@ -3,8 +3,8 @@ class GusanoBody {
   final PVector tmpToParent = new PVector(0, 0);
   final PVector tmpPerp = new PVector(0, 0);
   // --- Phase 2: Bell-leads / tentacle-wave tuning ---
-  final float SEG_SMOOTH_HEAD = 0.92;   // stiffer near bell
-  final float SEG_SMOOTH_TAIL = 0.75;   // stiffer toward tail to reduce lag
+  final float SEG_SMOOTH_HEAD = 0.78;   // more flexible near bell for smooth curves (was 0.92)
+  final float SEG_SMOOTH_TAIL = 0.62;   // laggier tail for natural arc (was 0.75)
   final float TURN_REF = 0.08;          // 
   final float TURN_WAVE_BOOST = 0.5;    // reduce turn-driven wave reintroduction
   final float TAIL_WAVE_BOOST = 1.02;   // minimal tail amplification
@@ -22,6 +22,12 @@ class GusanoBody {
     float followSpeed = lerp(slowFollow, fastFollow, streamline) * g.followMoodScale;
     float followPulseScale = lerp(FOLLOW_GLIDE_REDUCE, FOLLOW_CONTRACTION_BOOST, contractCurve);
     followSpeed *= followPulseScale;
+    followSpeed *= g.bodyFollowScale; // Species compensation for rhythm harmony
+    
+    // Boost body follow during chase/flee for less rigid appearance
+    if (g.arcState == Gusano.ARC_CHASE || g.arcState == Gusano.ARC_FLEE) {
+      followSpeed *= 1.25;  // 25% faster follow during interactions
+    }
 
     float slowTurbulence = 0.9;
     float fastTurbulence = 0.2;
@@ -33,7 +39,7 @@ class GusanoBody {
     g.debugBodyGlideScale = bodyGlideScale;
 
     // Lateral undulation: creates swimming wave motion
-    float undulationFreq = g.pulseRate * 0.8; // Sync with pulse rhythm
+    float undulationFreq = g.pulseRate * 0.8 * g.bodyUndulationScale; // Species-scaled wave sync
     float undulationPhase = t * undulationFreq * TWO_PI;
     // Base rule: less waving at high speed
     float speedFade = pow(constrain(vnorm, 0, 1), UNDULATION_SPEED_EXP);
@@ -78,9 +84,17 @@ class GusanoBody {
       }
 
       // Variable follow smoothing: stiffer near head, laggier near tail.
-      // Slightly stiffer during contraction, looser during glide.
+      // During turns, loosen body so it flows in a curve (3D spine feel).
       float segSmoothBase = lerp(SEG_SMOOTH_HEAD, SEG_SMOOTH_TAIL, segmentRatio);
-      float phaseStiff = lerp(0.92, 1.08, constrain(contractCurve, 0, 1));
+      float phaseStiff = lerp(0.88, 1.04, constrain(contractCurve, 0, 1));  // Relaxed from 0.92-1.08
+      // Species adjustment: fast pulsers need slightly stiffer tails to keep up
+      segSmoothBase *= ("CUBO".equals(g.speciesLabel)) ? 0.95 : 1.0;  // Less extreme (was 0.92)
+      
+      // Turn relaxation: body becomes more fluid during turns for graceful arcs
+      float turnAmount = abs(g.turnEMA);
+      float turnRelax = lerp(1.0, 0.85, constrain(turnAmount / 0.15, 0, 1));  // Up to 15% looser in turns
+      segSmoothBase *= turnRelax;
+      
       float segSmooth = constrain(segSmoothBase * phaseStiff, 0.20, 0.95);
 
       seg.seguir(segAnterior.x + turbulenceX, segAnterior.y + turbulenceY, followSpeed, segSmooth);

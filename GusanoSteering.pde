@@ -372,11 +372,12 @@ class GusanoSteering {
     
     // Distance-based attack intensity
     float dist = dist(cabeza.x, cabeza.y, targetHead.x, targetHead.y);
-    float attackIntensity = constrain(map(dist, 20, 120, 2.5, 1.0), 1.0, 2.5);
+    float attackIntensity = constrain(map(dist, 20, 120, 2.0, 0.8), 0.8, 2.0);
     
     // Rhythmic burst: stronger during pulse peak, extra boost while pouncing
-    float pounceBoost = timeSinceLock < (g.aggroPauseTime + 1.0) ? 1.3 : 1.0;
-    float chaseMagnitude = rhythmGate * attackIntensity * 2.8 * pounceBoost;
+    // Reduced from 2.8 to 1.8 for more graceful pursuit that body can follow
+    float pounceBoost = timeSinceLock < (g.aggroPauseTime + 1.0) ? 1.2 : 1.0;
+    float chaseMagnitude = rhythmGate * attackIntensity * 1.8 * pounceBoost;
     
     aggro.set(toTarget).mult(chaseMagnitude);
     return aggro;
@@ -563,13 +564,13 @@ class GusanoSteering {
     }
     away.normalize();
 
-    // Survival instinct: partial phase bypass so flee still happens in glide.
-    float fleePhaseGate = lerp(0.55, 1.0, cc);
+    // Survival instinct: strong phase bypass so flee happens even during glide
+    float fleePhaseGate = lerp(0.70, 1.0, cc);  // Increased from 0.55 for more responsive flee
 
-    // Stronger flee when closer.
+    // Stronger flee when closer
     float d = dist(cabeza.x, cabeza.y, th.x, th.y);
     float tClose = constrain(1.0 - (d / max(1.0, g.arcSpotRadius)), 0, 1);
-    float strength = lerp(1.2, 3.2, pow(tClose, 0.7));
+    float strength = lerp(1.8, 4.0, pow(tClose, 0.7));  // Increased from 1.2-3.2 for more dramatic escape
 
     aggro.set(away).mult(strength * fleePhaseGate);
     return aggro;

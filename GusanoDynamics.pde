@@ -123,8 +123,8 @@ class GusanoDynamics {
       
       // Apply reduced rotational torque proportional to penetration squared (so walls
       // nudge heading but don't induce large rapid head rotations that propagate)
-      float torqueStrength = 0.06 * penetration * penetration;
-      g.headAngle = lerpAngle(g.headAngle, g.headAngle + turnAway * 0.4, torqueStrength);
+      float torqueStrength = 0.035 * penetration * penetration;  // Reduced from 0.06 to avoid turn interruption
+      g.headAngle = lerpAngle(g.headAngle, g.headAngle + turnAway * 0.3, torqueStrength);  // Reduced from 0.4
       
       // 2. SLIDING FRICTION: Allow movement parallel to wall, resist perpendicular
       float dotVelWall = PVector.dot(g.vel, tmpWallNormal);
