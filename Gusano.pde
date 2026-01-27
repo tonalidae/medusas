@@ -218,6 +218,8 @@ class Gusano {
 
   void actualizar() {
     Segmento cabeza = segmentos.get(0);
+    // [PATCH 1] Validate incoming velocity
+    if (AUTO_HEAL_NANS) validateVector(vel, "vel_start");
     float dt = 1.0 / max(1, frameRate);
     // Startup / low-FPS safety: prevent huge impulses when frameRate is small
     dt = constrain(dt, 1.0/120.0, 1.0/20.0);
@@ -288,6 +290,8 @@ class Gusano {
 
     // Inertia / smooth turning
     PVector desiredSteer = steering.computeSteering(cabeza);
+    // [PATCH 2] Validate steering from external class
+    if (AUTO_HEAL_NANS) validateVector(desiredSteer, "steer_computed");
     desiredSteer.add(headTurbulenceX, headTurbulenceY);
     if (steerSmoothed.magSq() < 0.0001) {
       steerSmoothed.set(desiredSteer);
@@ -498,6 +502,9 @@ class Gusano {
       vel.set(0, 0);
     }
 
+    // [PATCH 3] Validate final velocity before moving position
+    if (AUTO_HEAL_NANS) validateVector(vel, "vel_final");
+
     // Manual movement of head based on smooth angle + velocity
     cabeza.angulo = headAngle;
     cabeza.x += vel.x;
@@ -577,21 +584,23 @@ class Gusano {
 
   // Contraction amount: 0..1 with contract/hold/release shaping
   float pulseShape(float phase) {
-    float c = max(0.0001, contractPortion);
-    float h = max(0.0, holdPortion);
-    float r = max(0.0001, 1.0 - c - h);
+    // Sanitize inputs to ensure geometry is valid
+    float c = constrain(contractPortion, 0.01, 0.90);
+    // Ensure hold doesn't eat the entire remaining time
+    float h = constrain(holdPortion, 0.0, 0.98 - c);
+    // r is guaranteed > 0.01 due to constraints above
+    float r = 1.0 - c - h;
 
     float p = wrap01(phase);
     if (p < c) {
       float x = p / c;
-      // Fast snap-in: ease-out
       return 1.0 - pow(1.0 - x, 3);
     } else if (p < c + h) {
       return 1.0;
     } else {
       float x = (p - c - h) / r;
-      // Slow release: ease-in
-      return 1.0 - pow(x, 2);
+      // Extra safety constrain
+      return 1.0 - pow(constrain(x, 0, 1), 2);
     }
   }
 
@@ -621,4 +630,18 @@ class Gusano {
     if ("DOM".equals(label)) return AGGRESSIVE;
     return CALM;
   }
+
+  // Validate PVector for NaN/Infinite and optionally heal
+  void validateVector(PVector v, String label) {
+    if (v == null) return;
+    if (Float.isNaN(v.x) || Float.isNaN(v.y) || Float.isInfinite(v.x) || Float.isInfinite(v.y)) {
+      if (AUTO_HEAL_NANS) {
+        println("[WARN] NaN detected in " + label + " (ID: " + id + "). Resetting to 0.");
+        v.set(0, 0);
+        // Small kick to prevent dead-stop gravity wells
+        v.x = random(-0.01, 0.01);
+      }
+    }
+  }
+
 }

@@ -141,16 +141,6 @@ class GusanoRender {
     sumWorldX = 0;
     sumWorldY = 0;
     int worldCount = 0;
-
-    // Build a sampled point cloud from the body segments for glow/core rendering
-    ArrayList<PVector> glowPts = new ArrayList<PVector>();
-    for (int si = 0; si < g.segmentos.size(); si++) {
-      Segmento s = g.segmentos.get(si);
-      glowPts.add(new PVector(s.x + finalAlignDx, s.y + finalAlignDy));
-    }
-    // Draw additive layered glow under the body
-    drawGlow(g, glowPts, t);
-
     beginShape(POINTS);
     for (int i = 5000; i > 0; i--) {
       float x_param = i % 200;
@@ -257,9 +247,6 @@ class GusanoRender {
       worldCount++;
     }
     endShape();
-
-    // Draw denser core under the glow (slightly after to keep core visible)
-    drawCore(g, glowPts, t);
 
     if (debugJellyMotion && worldCount > 0) {
       float cx = sumWorldX / worldCount;

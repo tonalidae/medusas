@@ -374,28 +374,105 @@ void updateWaterTexture() {
 
 void loadWaterFrames() {
   ArrayList<PImage> frames = new ArrayList<PImage>();
-  int i = 0;
-  while (true) {
-    String filename = "water_texture/" + nf(i, 4) + ".png";
-    PImage img = loadImage(filename);
-    if (img == null) break;
-    // convert loaded frame to grayscale in-memory so overlay remains neutral
-    img.filter(GRAY);
-    frames.add(img);
-    i++;
+  // Prefer scanning the sketch data directory first
+  java.util.List<String> triedPaths = new ArrayList<String>();
+
+  // 1) Try sketch root folder: sketchPath("water_texture")
+  java.io.File dirSketch = new java.io.File(sketchPath("water_texture"));
+  triedPaths.add(dirSketch.getAbsolutePath());
+  if (dirSketch.exists() && dirSketch.isDirectory()) {
+    println("[INFO] Scanning " + dirSketch.getAbsolutePath());
+    String[] names = dirSketch.list();
+    if (names != null) {
+      java.util.Arrays.sort(names);
+      for (String name : names) {
+        if (name == null) continue;
+        if (!name.toLowerCase().endsWith(".png")) continue;
+        if (name.startsWith(".")) continue;
+        PImage img = loadImage(sketchPath("water_texture") + "/" + name);
+        if (img == null) {
+          println("[WARN] failed to load frame: " + name + " from " + dirSketch.getAbsolutePath());
+          continue;
+        }
+        img.filter(GRAY);
+        frames.add(img);
+      }
+    }
   }
+
+  // 2) Try data folder: dataPath("water_texture")
+  if (frames.size() == 0) {
+    java.io.File dirData = new java.io.File(dataPath("water_texture"));
+    triedPaths.add(dirData.getAbsolutePath());
+    if (dirData.exists() && dirData.isDirectory()) {
+      println("[INFO] Scanning " + dirData.getAbsolutePath());
+      String[] names = dirData.list();
+      if (names != null) {
+        java.util.Arrays.sort(names);
+        for (String name : names) {
+          if (name == null) continue;
+          if (!name.toLowerCase().endsWith(".png")) continue;
+          if (name.startsWith(".")) continue;
+          PImage img = loadImage(dataPath("water_texture") + "/" + name);
+          if (img == null) {
+            println("[WARN] failed to load frame: " + name + " from " + dirData.getAbsolutePath());
+            continue;
+          }
+          img.filter(GRAY);
+          frames.add(img);
+        }
+      }
+    }
+  }
+
+  // 3) Numeric sequence fallback: check both sketchPath and dataPath for each file
+  if (frames.size() == 0) {
+    println("[INFO] No directory images; attempting numeric sequence fallback starting at 0001.png");
+    int i = 1;
+    int maxTry = 1000; // safety
+    while (i <= maxTry) {
+      String rel = "water_texture/" + nf(i, 4) + ".png";
+      java.io.File fSketch = new java.io.File(sketchPath(rel));
+      java.io.File fData = new java.io.File(dataPath(rel));
+      if (fSketch.exists()) {
+        PImage img = loadImage(sketchPath(rel));
+        if (img == null) {
+          println("[WARN] failed to load numeric frame from sketchPath: " + sketchPath(rel));
+          break;
+        }
+        img.filter(GRAY);
+        frames.add(img);
+      } else if (fData.exists()) {
+        PImage img = loadImage(dataPath(rel));
+        if (img == null) {
+          println("[WARN] failed to load numeric frame from dataPath: " + dataPath(rel));
+          break;
+        }
+        img.filter(GRAY);
+        frames.add(img);
+      } else {
+        break;
+      }
+      i++;
+    }
+  }
+
   if (frames.size() == 0) {
     waterFramesAvailable = false;
     waterFrames = null;
     if (useWaterFrames) {
       useWaterFrames = false;
     }
+    println("[WARN] Missing water texture frames in data/water_texture; tried paths:");
+    for (String p : triedPaths) println("  " + p);
     warnMissingWaterFrames();
     return;
   }
+
   waterFrames = frames.toArray(new PImage[frames.size()]);
   waterFrameCount = waterFrames.length;
   waterFramesAvailable = true;
+  println("[INFO] Loaded " + waterFrameCount + " water frames.");
 }
 
 int advanceWaterFrame() {
@@ -419,7 +496,7 @@ int advanceWaterFrame() {
 
 void warnMissingWaterFrames() {
   if (waterFramesWarned) return;
-  println("[WARN] Missing water texture frames in data/water_texture; falling back to procedural water.");
+  println("[WARN] Missing water texture frames; falling back to procedural water.");
   waterFramesWarned = true;
 }
 
