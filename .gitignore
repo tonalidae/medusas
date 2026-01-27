@@ -1,0 +1,30 @@
+# Python virtualenvs (common names)
+venv/
+.venv/
+env/
+ENV/
+pyenv/
+venv.bak/
+
+# Virtualenv artifacts
+pyvenv.cfg
+pip-selfcheck.json
+
+# Bytecode / caches
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Build / packaging
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Test / tooling caches
+.pytest_cache/
+.mypy_cache/
+
+# Local Python version manager
+.python-version
