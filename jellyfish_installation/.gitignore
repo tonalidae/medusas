@@ -1,0 +1,26 @@
+# Ignore common Python virtual environment directories (relative to this folder)
+venv/
+.env/
+.venv/
+env/
+ENV/
+pyenv/
+.Python
+pyvenv.cfg
+
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Distribution / build
+build/
+dist/
+*.egg-info/
+
+# Editor / tooling
+.ipynb_checkpoints/
+.vscode/
+*.egg
+.python-version
+.cache/
