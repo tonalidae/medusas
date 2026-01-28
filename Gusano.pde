@@ -176,7 +176,8 @@ class Gusano {
         social = random(0.1, 0.4);
         timidity = random(0.0, 0.2);
         aggression = random(0.7, 1.0);
-        curiosity = random(0.0, 0.3);
+        // Increase DOM curiosity so these jellyfish seek the user more
+        curiosity = random(0.45, 0.85);
         // Faster, stronger cycles
         basePulseRate = random(0.22, 0.50);
         basePulseStrength = random(1.1, 2.1);

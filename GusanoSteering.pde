@@ -16,6 +16,22 @@ class GusanoSteering {
     }
 
     if (g.state == Gusano.AGGRESSIVE) {
+      // Allow AGGRESSIVE agents to sometimes approach a nearby/still user
+      float contractCurve = g.pulseContractCurve(g.pulsePhase);
+      float steerPhaseGate = lerp(0.2, 1.0, contractCurve);
+
+      float dMouse = dist(cabeza.x, cabeza.y, mouseX, mouseY);
+      // If mouse is nearby, mostly still, and this agent has high curiosity, approach
+      if (dMouse < 350 && g.curiosity > 0.45 && mouseSpeed < 4) {
+        PVector toMouse = new PVector(mouseX - cabeza.x, mouseY - cabeza.y);
+        if (toMouse.magSq() > 0.0001) {
+          toMouse.normalize();
+          PVector m = PVector.mult(toMouse, 2.0 * steerPhaseGate * g.curiosity);
+          g.debugSteerMouse.set(m);
+          return m;
+        }
+      }
+
       PVector aggro = computeAggroPursuit(cabeza);
       g.debugSteerAggro.set(aggro);
       return aggro;

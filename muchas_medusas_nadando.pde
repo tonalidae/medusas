@@ -29,8 +29,8 @@ float remoteSmoothX = -1000;
 float remoteSmoothY = -1000;
 
 // --- VOLUMETRIC INTERACTION VARS ---
-// Stores previous positions for up to 6 tracked points to calculate velocity
-PVector[] prevHandPoints = new PVector[6]; 
+// Stores previous positions for up to 12 tracked points (2 hands × 6 points)
+PVector[] prevHandPoints = new PVector[12]; 
 
 boolean handPresent = false;
 int lastHandTime = 0;
@@ -240,11 +240,17 @@ void draw() {
       PVector p = prevHandPoints[i];
       if (p != null) {
         noStroke();
-        fill(255, 200, 50, 160);
+        // Color first hand warm, second hand cool
+        if (i < 6) {
+          fill(255, 200, 50, 160);
+        } else {
+          fill(50, 200, 255, 140);
+        }
         ellipse(p.x, p.y, 18, 18);
         fill(0, 200);
         textSize(12);
-        text((i+1) + "", p.x + 8, p.y - 8);
+        // Label per-finger (1..6) for each hand
+        text(((i % 6) + 1) + "", p.x + 8, p.y - 8);
       }
     }
     popStyle();
@@ -991,5 +997,9 @@ void oscEvent(OscMessage msg) {
       pointIndex++;
       if (pointIndex >= prevHandPoints.length) break;
     }
+      // Clear any leftover points from previous frame (when fewer points are sent)
+      for (int j = pointIndex; j < prevHandPoints.length; j++) {
+        prevHandPoints[j] = null;
+      }
   }
 }

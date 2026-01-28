@@ -11,7 +11,7 @@ client = udp_client.SimpleUDPClient(IP, PORT)
 
 mp_hands = mp.solutions.hands
 hands = mp_hands.Hands(
-    max_num_hands=1,
+    max_num_hands=2,
     model_complexity=1,
     min_detection_confidence=0.7,
     min_tracking_confidence=0.5
@@ -40,26 +40,37 @@ try:
         results = hands.process(image_rgb)
         image.flags.writeable = True
 
-        # 3. Extract & Send Data
+        # 3. Extract & Send Data (support up to 2 hands, sent in left->right order)
         if results.multi_hand_landmarks:
+            hands_list = []
+            key_indices = [4, 8, 12, 16, 20, 9]
+            # Collect per-hand data and a sort key (avg x)
             for hand_landmarks in results.multi_hand_landmarks:
-                # Key Points: Thumb(4), Index(8), Middle(12), Ring(16), Pinky(20), Palm(9)
-                key_indices = [4, 8, 12, 16, 20, 9]
-                osc_data = []
-                
+                osc_data_hand = []
+                avg_x = 0.0
                 for idx in key_indices:
                     lm = hand_landmarks.landmark[idx]
-                    osc_data.append(lm.x)
-                    osc_data.append(lm.y)
-                    
-                    # Debug Draw
-                    h, w, c = image.shape
+                    osc_data_hand.append(lm.x)
+                    osc_data_hand.append(lm.y)
+                    avg_x += lm.x
+                avg_x /= float(len(key_indices))
+                hands_list.append((avg_x, osc_data_hand, hand_landmarks))
+
+            # Sort left-to-right (image coords), then flatten
+            hands_list.sort(key=lambda item: item[0])
+            osc_data = []
+            for _, hand_pair_list, hand_landmarks in hands_list:
+                osc_data.extend(hand_pair_list)
+                # Debug draw for this hand
+                h, w, c = image.shape
+                for idx in key_indices:
+                    lm = hand_landmarks.landmark[idx]
                     cx, cy = int(lm.x * w), int(lm.y * h)
-                    color = (0, 255, 0) if idx == 9 else (255, 0, 255) # Green for palm
+                    color = (0, 255, 0) if idx == 9 else (255, 0, 255)
                     cv2.circle(image, (cx, cy), 8, color, cv2.FILLED)
 
-                # Send flat list: [x1, y1, x2, y2, ...]
-                client.send_message("/hand", osc_data)
+            # Send single flat list: [hand1_x1,hand1_y1,...,handN_x6,handN_y6]
+            client.send_message("/hand", osc_data)
 
         cv2.imshow('Hand Tracker Debug', image)
         if cv2.waitKey(5) & 0xFF == ord('q'):
