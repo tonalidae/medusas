@@ -25,6 +25,9 @@ float waterAlpha = 25; // tint alpha when drawing overlay (0-255) — lowered fo
 float waterFPS = 12.0;
 OscP5 oscP5;
 
+// --- User interaction feedback (non-visual) ---
+boolean useUserFlowFeedback = true;   // keep flow pushback logic active without showing a cursor
+
 float remoteX = -1000;
 float remoteY = -1000;
 float remoteSmoothX = -1000;
@@ -126,6 +129,40 @@ float SEG_SNAP_THR = 80;
 boolean STABILIZE_MOOD = true;
 boolean DEBUG_MOOD = true;
 
+// --- Curious stickiness toward user ---
+float CURIOUS_STICK_MS = 6000;   // how long a curious jelly keeps memory of the user
+float CURIOUS_ATTRACT = 1.0;     // base attraction toward user when curious
+float CURIOUS_ORBIT = 0.28;      // sideways orbit factor to avoid pinning
+float FEAR_MEMORY_MS = 8000;     // how long a fear imprint lingers
+float FEAR_AVOID_BOOST = 1.8;    // flee multiplier when fear memory is active
+
+// --- Energy / fatigue loop ---
+float ENERGY_MAX = 1.0;
+float ENERGY_MIN = 0.3;
+float ENERGY_DRAIN_RATE = 0.00035;   // scales with thrust impulse
+float ENERGY_RECOVER_RATE = 0.00025; // base recover per frame (scaled by dtNorm)
+float ENERGY_CALM_BONUS = 2.0;       // recovery multiplier when CALM
+float ENERGY_LOW_DRAG_BOOST = 0.25;  // extra drag when tired (1-energy) * this
+float ENERGY_MAXSPEED_SCALE = 0.3;   // fraction of maxSpeed lost when fully tired
+
+// --- Buddy / micro-cohesion ---
+float BUDDY_SOCIAL_THR = 0.55;
+float BUDDY_PICK_CHANCE = 0.008;   // per frame chance when eligible
+float BUDDY_DURATION_MS = 4200;
+float BUDDY_COH_WEIGHT = 0.9;
+
+// --- Frustration (wall/flow memory) ---
+float FRUSTRATION_DECAY = 0.96;
+float FRUSTRATION_TURN_BOOST = 0.6;
+float FRUSTRATION_WALL_PUSH = 0.8;
+
+// --- Mood field diffusion ---
+float MOOD_FIELD_DECAY = 0.92;   // base decay per 16ms; now time-scaled
+float MOOD_FIELD_SPLAT = 1.0;
+float MOOD_FIELD_NEIGHBOR_SPLAT = 0.5;
+float MOOD_FIELD_DIAGONAL_SPLAT = 0.35;
+float MOOD_FIELD_MAX = 2.0;
+
 // --- Mood stabilization config (conservative defaults) ---
 int MOOD_COOLDOWN_FRAMES = 30;   // ~0.5s at 60fps
 int MOOD_DWELL_FRAMES = 10;      // condition must persist
@@ -163,3 +200,11 @@ float clampMarginBottom = 260;
 HashMap<Long, ArrayList<Gusano>> spatialGrid = new HashMap<Long, ArrayList<Gusano>>();
 // Cell size should be >= max interaction radius (cohesion/pursuit). Adjust as needed.
 float gridCellSize = 260;
+
+// --- Mood propagation grid (fear/calm waves) ---
+class MoodField {
+  float fear = 0;
+  float calm = 0;
+  int lastUpdate = 0;
+}
+HashMap<Long, MoodField> moodGrid = new HashMap<Long, MoodField>();

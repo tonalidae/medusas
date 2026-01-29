@@ -8,7 +8,31 @@ class GusanoRender {
   }
 
   void dibujarForma() {
-    stroke(g.currentColor);
+    float rimWeight = 1.2;
+    color rimColor = g.currentColor;
+    switch(g.state) {
+      case Gusano.FEAR:
+        rimWeight = 1.6 + sin(t * 8.0 + g.id) * 0.5;
+        rimColor = lerpColor(rimColor, color(255, 120, 40, 180), 0.5);
+        break;
+      case Gusano.CALM:
+        rimWeight = 1.1;
+        rimColor = lerpColor(rimColor, color(180, 220, 255, 140), 0.3);
+        break;
+      case Gusano.AGGRESSIVE:
+        rimWeight = 1.5;
+        rimColor = lerpColor(rimColor, color(255, 60, 160, 170), 0.4);
+        break;
+      case Gusano.CURIOUS:
+        rimWeight = 1.3;
+        break;
+      case Gusano.SHY:
+        rimWeight = 1.0;
+        rimColor = lerpColor(rimColor, color(200, 180, 240, 120), 0.25);
+        break;
+    }
+    stroke(rimColor);
+    strokeWeight(rimWeight);
     // Recentering: compute local centroid so deformation stays centered on physics
     float centerX = 0;
     float centerY = 0;

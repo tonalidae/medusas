@@ -116,6 +116,16 @@ class Gusano {
   float smoothedThreat = 0;
   float smoothedCuriosity = 0;
   float smoothedProx = 0;
+  int lastUserSeenMs = -9999;     // timestamp of last user sighting
+  float userInterest = 0;         // decays after user lost; drives curious linger
+  int lastFearUserMs = -9999;     // timestamp of last fear trigger (user-related or spike)
+  float fearMemory = 0;           // decays after fear to keep some avoidance
+  float fieldFear = 0;            // sampled fear field
+  float fieldCalm = 0;            // sampled calm field
+  float energy = 1.0;             // 0..1 fatigue meter
+  int buddyId = -1;
+  int buddyLockMs = -9999;
+  float frustration = 0;          // builds on wall hits
   int moodHoldFramesRemaining = 0;
   int moodCandidate = -1;
   int moodCandidateFrames = 0;
@@ -153,10 +163,14 @@ class Gusano {
 
     // Personality archetype (stable baseline)
     float pr = random(1);
-    if (pr < 0.5) {
-      personalityLabel = "AGG";
-    } else {
+    if (pr < 0.35) {
       personalityLabel = "SHY";
+    } else if (pr < 0.65) {
+      personalityLabel = "AGG";
+    } else if (pr < 0.85) {
+      personalityLabel = "EXPL"; // Explorer
+    } else {
+      personalityLabel = "DRIF"; // Drifter
     }
     baseMood = baseMoodForLabel(personalityLabel);
 
@@ -173,7 +187,6 @@ class Gusano {
         baseDrag = random(0.90, 0.93);
         break;
       case "AGG":
-      default:
         social = random(0.1, 0.4);
         timidity = random(0.0, 0.2);
         aggression = random(0.7, 1.0);
@@ -183,6 +196,31 @@ class Gusano {
         basePulseRate = random(0.22, 0.50);
         basePulseStrength = random(1.1, 2.1);
         baseDrag = random(0.86, 0.90);
+        break;
+      case "EXPL": // Explorer: high curiosity, medium social
+        social = random(0.45, 0.8);
+        timidity = random(0.2, 0.5);
+        aggression = random(0.0, 0.3);
+        curiosity = random(0.7, 1.0);
+        basePulseRate = random(0.20, 0.42);
+        basePulseStrength = random(0.9, 1.4);
+        baseDrag = random(0.88, 0.92);
+        baseTurnRate = random(0.060, 0.100);
+        baseSinkStrength = random(0.05, 0.10);
+        baseTurbulence = random(1.0, 1.2);
+        break;
+      case "DRIF": // Drifter: low traits, high glide
+      default:
+        social = random(0.1, 0.3);
+        timidity = random(0.1, 0.4);
+        aggression = random(0.05, 0.25);
+        curiosity = random(0.2, 0.5);
+        basePulseRate = random(0.16, 0.32);
+        basePulseStrength = random(0.7, 1.1);
+        baseDrag = random(0.82, 0.88); // glidier
+        baseTurnRate = random(0.035, 0.070);
+        baseSinkStrength = random(0.03, 0.07);
+        baseTurbulence = random(0.85, 1.05);
         break;
     }
 
@@ -331,7 +369,8 @@ class Gusano {
     float limitedAngle = headAngle + diff;
     headAngle = lerpAngle(headAngle, limitedAngle, turnRate);
 
-    float speed01 = constrain(vmagNow / maxSpeed, 0, 1);
+    float maxSpeedEff = maxSpeed * (0.7 + ENERGY_MAXSPEED_SCALE * energy); // tired -> lower cap
+    float speed01 = constrain(vmagNow / maxSpeedEff, 0, 1);
     float thrustScale = constrain(1.0 - speed01, 0.15, 1.0);
 
     // Velocity-based movement with pulse thrust and drag
@@ -412,6 +451,13 @@ class Gusano {
     if (thrustSmoothed > 0.00001) {
       vel.add(PVector.mult(dir, thrustSmoothed));
     }
+
+    // --- Energy / fatigue loop ---
+    float energyDrain = thrustSmoothed * ENERGY_DRAIN_RATE;
+    float energyRecover = ENERGY_RECOVER_RATE * dtNorm;
+    if (state == CALM) energyRecover *= ENERGY_CALM_BONUS;
+    if (vmagNow < maxSpeedEff * 0.25) energyRecover *= 1.5;
+    energy = constrain(energy - energyDrain + energyRecover, ENERGY_MIN, ENERGY_MAX);
 
     // Buoyancy drift: subtle sinking when not contracting
     float sinkStrengthEffective = sinkStrength;
@@ -504,6 +550,9 @@ class Gusano {
       vel.set(0, 0);
     }
 
+    // Frustration decay
+    frustration *= FRUSTRATION_DECAY;
+
     // [PATCH 3] Validate final velocity before moving position
     if (AUTO_HEAL_NANS) validateVector(vel, "vel_final");
 
@@ -520,16 +569,18 @@ class Gusano {
     if (clampedX) {
       vel.x *= 0.3;
       lastClampMsX = millis();
+      frustration = min(1.0, frustration + 0.35);
     }
     if (clampedY) {
       vel.y *= 0.3;
       lastClampMsY = millis();
+      frustration = min(1.0, frustration + 0.35);
     }
     if (clampedX || clampedY) vel.mult(0.7);
-    vel.limit(maxSpeed);
+    vel.limit(maxSpeedEff);
     // Update body
     float vmag = vel.mag();
-    float vnorm = constrain(vmag / maxSpeed, 0, 1);
+    float vnorm = constrain(vmag / maxSpeedEff, 0, 1);
     float streamline = max(vnorm, contraction * 0.8);
 
     float slowFollow = 2.2;
@@ -636,6 +687,8 @@ class Gusano {
   int baseMoodForLabel(String label) {
     if ("SHY".equals(label)) return SHY;
     if ("AGG".equals(label)) return AGGRESSIVE;
+    if ("EXPL".equals(label)) return CURIOUS;
+    if ("DRIF".equals(label)) return CALM;
     return CALM;
   }
 

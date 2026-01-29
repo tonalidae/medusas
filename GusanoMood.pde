@@ -33,6 +33,18 @@ class GusanoMood {
       changed = true;
     }
     if (changed) {
+      if (newState == Gusano.FEAR) {
+        g.lastFearUserMs = millis();
+        g.fearMemory = 1.0;
+      }
+      if (newState == Gusano.FEAR || newState == Gusano.CALM) {
+        Segmento head = g.segmentos.get(0);
+        if (head != null) {
+          float fearAmt = (newState == Gusano.FEAR) ? MOOD_FIELD_SPLAT : 0;
+          float calmAmt = (newState == Gusano.CALM) ? MOOD_FIELD_SPLAT : 0;
+          splatMoodField(head.x, head.y, fearAmt, calmAmt);
+        }
+      }
       g.moodChangeCount++;
       int now = millis();
       if (debugMoodStats && newState != Gusano.FEAR && now - g.lastMoodChangeMs >= 200) {
@@ -56,6 +68,12 @@ class GusanoMood {
     float wCurious = 0.4 + g.curiosity * 1.2;
     float wShy = 0.3 + g.timidity * 1.0;
     float wAggressive = 0.3 + g.aggression * 1.2;
+    float userMem = g.userInterest * exp(-(millis() - g.lastUserSeenMs) / CURIOUS_STICK_MS);
+    wCurious += 1.2 * userMem;
+    wCurious += g.fieldCalm * (0.6 + 0.4 * g.social);
+    wCalm += g.fieldCalm * (0.6 + g.social);
+    wShy += g.fieldFear * (0.5 + 0.5 * g.timidity);
+    wAggressive *= (1.0 - min(0.4, g.fieldFear * 0.25));
 
     Segmento head = g.segmentos.get(0);
     float margin = 100;
@@ -97,8 +115,26 @@ class GusanoMood {
     if (g.stateCooldown > 0) g.stateCooldown -= dt;
     if (g.postFearTimer > 0) g.postFearTimer -= dt;
     if (g.fearCooldownFrames > 0) g.fearCooldownFrames--;
+
+    // Lingering curiosity: slow down timer when user was recently seen
+    float userMem = g.userInterest * exp(-(millis() - g.lastUserSeenMs) / CURIOUS_STICK_MS);
+    if (g.state == Gusano.CURIOUS && userMem > 0.05) {
+      g.stateTimer = max(0, g.stateTimer - dt * 0.8 * userMem);
+      g.stateDuration = max(g.stateDuration, 5.5 + 2.5 * userMem);
+    }
+    // Fear memory decays smoothly
+    g.fearMemory = g.fearMemory * exp(-dt * 1000.0 / FEAR_MEMORY_MS);
     
     Segmento head = g.segmentos.get(0);
+    MoodField mf = sampleMoodField(head.x, head.y);
+    if (mf != null) {
+      g.fieldFear = mf.fear;
+      g.fieldCalm = mf.calm;
+    } else {
+      g.fieldFear = 0;
+      g.fieldCalm = 0;
+    }
+    float fieldFear = g.fieldFear;
     float wallProx = wallProximity(head, 100);
 
     // --- Mood Stabilizer (isolated; does not change core logic) ---
@@ -124,6 +160,7 @@ class GusanoMood {
     if (g.debugSpikeThreshold > 0.0001) {
       threatRaw = constrain(g.debugSpeedDelta / g.debugSpikeThreshold, 0, 2);
     }
+    threatRaw += fieldFear * 0.6;
     float curiosityRaw = g.curiosity;
 
     g.smoothedThreat = lerp(g.smoothedThreat, threatRaw, MOOD_EMA_ALPHA);
@@ -135,9 +172,11 @@ class GusanoMood {
                              millis() > 3000 &&
                              g.postFearTimer <= 0;
     boolean randomFear = randomEligible && random(1) < 0.00005;
+    boolean fieldFearStartle = fieldFear > 0.35;
     boolean startle = speedSpike || randomFear;
+    if (fieldFearStartle) startle = true;
     if (startle && g.state != Gusano.FEAR && g.stateCooldown <= 0 && g.fearCooldownFrames <= 0) {
-      g.lastFearReason = speedSpike ? "SPIKE" : "RANDOM";
+      g.lastFearReason = speedSpike ? "SPIKE" : (randomFear ? "RANDOM" : "FIELD");
       if (!speedSpike && randomFear) g.lastFearReason = "RANDOM";
       g.lastFearTime = millis();
       g.stateCooldown = random(3.0, 6.0);
@@ -390,6 +429,10 @@ class GusanoMood {
     targetTurbScale = 1.0 + (targetTurbScale - 1.0) * moodStrength;
     targetHeadNoise = 1.0 + (targetHeadNoise - 1.0) * moodStrength;
 
+    // Fatigue influence
+    targetPulseStrength *= g.energy;
+    targetDrag *= (1.0 + (1.0 - g.energy) * ENERGY_LOW_DRAG_BOOST);
+
     if (g.postFearTimer > 0) {
       float freeze = constrain(g.postFearTimer / 1.2, 0, 1);
       targetTurbScale = lerp(targetTurbScale, 0.4, freeze);
@@ -450,6 +493,7 @@ class GusanoMood {
     }
     // Intensity drives brightness/saturation bump
     float boost = constrain(intensity, 0.6, 1.5);
+    boost *= (1.0 + g.fieldFear * 0.25 + g.fieldCalm * 0.15); // visualize local waves
     float r = constrain(red(base) * boost, 0, 255);
     float gC = constrain(green(base) * boost, 0, 255);
     float b = constrain(blue(base) * boost, 0, 255);

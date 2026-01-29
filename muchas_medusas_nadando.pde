@@ -1,5 +1,6 @@
 import oscP5.*;
 import netP5.*;
+import java.util.Map;
 
 // Configuration moved to Config.pde
 // Configuration moved to Config.pde
@@ -68,6 +69,9 @@ void draw() {
   if (showWaterInteraction) {
     drawWaterInteraction();
   }
+  // Update non-visual flow feedback so fluid pushes back organically
+  updateUserFlowFeedback();
+  decayMoodGrid();
   rebuildSpatialGrid();
   // 1. Hand Timeout
   if (millis() - lastHandTime > HAND_TIMEOUT_MS) {
@@ -198,6 +202,8 @@ void keyPressed() {
   } else if (key == 'x' || key == 'X') {
     AUTO_HEAL_NANS = !AUTO_HEAL_NANS;
     println("[DEBUG] AUTO_HEAL_NANS=" + AUTO_HEAL_NANS);
+  } else if (key == 'r' || key == 'R') {
+    resetInteractionMemory();
   } else if (key == '+' || key == '=') {
     numGusanos = min(32, numGusanos + 1);
     reiniciarGusanos();
@@ -225,6 +231,7 @@ void keyPressed() {
 }
 
 void reiniciarGusanos() {
+  moodGrid.clear();
   gusanos.clear();
   for (int i = 0; i < numGusanos; i++) {
     float x = random(200, width-200);
@@ -232,6 +239,22 @@ void reiniciarGusanos() {
     color c = color(0, 66); // Todos los gusanos son negros
     gusanos.add(new Gusano(x, y, c, i));
   }
+}
+
+void resetInteractionMemory() {
+  if (gusanos == null) return;
+  moodGrid.clear();
+  for (Gusano g : gusanos) {
+    g.userInterest = 0;
+    g.lastUserSeenMs = -9999;
+    g.fearMemory = 0;
+    g.lastFearUserMs = -9999;
+    g.fieldFear = 0;
+    g.fieldCalm = 0;
+    g.buddyId = -1;
+    g.frustration = 0;
+  }
+  println("[RESET] Cleared interaction memory for all jellyfish.");
 }
 
 
@@ -413,6 +436,83 @@ void warnMissingWaterFrames() {
 // --- Spatial grid helpers ---
 long cellKey(int cx, int cy) {
   return (((long)cx) << 32) ^ (cy & 0xffffffffL);
+}
+
+MoodField getMoodFieldCell(int cx, int cy, boolean create) {
+  long key = cellKey(cx, cy);
+  MoodField f = moodGrid.get(key);
+  if (f == null && create) {
+    f = new MoodField();
+    moodGrid.put(key, f);
+  }
+  return f;
+}
+
+void addMoodToCell(int cx, int cy, float fearAmt, float calmAmt) {
+  if (abs(fearAmt) < 0.0001 && abs(calmAmt) < 0.0001) return;
+  MoodField f = getMoodFieldCell(cx, cy, true);
+  f.fear = constrain(f.fear + fearAmt, 0, MOOD_FIELD_MAX);
+  f.calm = constrain(f.calm + calmAmt, 0, MOOD_FIELD_MAX);
+  f.lastUpdate = millis();
+}
+
+void splatMoodField(float x, float y, float fearAmt, float calmAmt) {
+  int cx = floor(x / gridCellSize);
+  int cy = floor(y / gridCellSize);
+  addMoodToCell(cx, cy, fearAmt, calmAmt);
+  // 8-neighbor Gaussian-ish spill
+  float n = MOOD_FIELD_NEIGHBOR_SPLAT;
+  float d = MOOD_FIELD_DIAGONAL_SPLAT;
+  addMoodToCell(cx + 1, cy, fearAmt * n, calmAmt * n);
+  addMoodToCell(cx - 1, cy, fearAmt * n, calmAmt * n);
+  addMoodToCell(cx, cy + 1, fearAmt * n, calmAmt * n);
+  addMoodToCell(cx, cy - 1, fearAmt * n, calmAmt * n);
+  addMoodToCell(cx + 1, cy + 1, fearAmt * d, calmAmt * d);
+  addMoodToCell(cx + 1, cy - 1, fearAmt * d, calmAmt * d);
+  addMoodToCell(cx - 1, cy + 1, fearAmt * d, calmAmt * d);
+  addMoodToCell(cx - 1, cy - 1, fearAmt * d, calmAmt * d);
+}
+
+MoodField sampleMoodField(float x, float y) {
+  int cx = floor(x / gridCellSize);
+  int cy = floor(y / gridCellSize);
+  float fearAcc = 0;
+  float calmAcc = 0;
+  int count = 0;
+  for (int oy = -1; oy <= 1; oy++) {
+    for (int ox = -1; ox <= 1; ox++) {
+      MoodField f = getMoodFieldCell(cx + ox, cy + oy, false);
+      if (f == null) continue;
+      fearAcc += f.fear;
+      calmAcc += f.calm;
+      count++;
+    }
+  }
+  if (count == 0) return null;
+  MoodField out = new MoodField();
+  out.fear = fearAcc / count;
+  out.calm = calmAcc / count;
+  return out;
+}
+
+void decayMoodGrid() {
+  if (moodGrid.isEmpty()) return;
+  ArrayList<Long> toRemove = new ArrayList<Long>();
+  int now = millis();
+  for (Map.Entry<Long, MoodField> e : moodGrid.entrySet()) {
+    MoodField f = e.getValue();
+    int last = (f.lastUpdate > 0) ? f.lastUpdate : now;
+    float dtMs = max(1, now - last);
+    float steps = dtMs / 16.0; // approx 60fps frames
+    float decay = pow(MOOD_FIELD_DECAY, steps);
+    f.fear *= decay;
+    f.calm *= decay;
+    f.lastUpdate = now;
+    if (f.fear < 0.001 && f.calm < 0.001) {
+      toRemove.add(e.getKey());
+    }
+  }
+  for (Long k : toRemove) moodGrid.remove(k);
 }
 
 void rebuildSpatialGrid() {

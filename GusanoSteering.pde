@@ -44,6 +44,9 @@ class GusanoSteering {
     float wallMarginTop = clampMarginTop;
     float wallMarginBottom = clampMarginBottom;
     float neighborSenseRadius = 180;
+    // Adaptive sensing: faster -> shorter range to reduce over-reactive clustering
+    float speedScale = constrain(g.vel.mag() / max(1.0, g.maxSpeed), 0, 1);
+    neighborSenseRadius = lerp(180, 110, speedScale);
     float sepRadius = 55;
     
     // === BIOLOGICAL CONSTRAINT: Pulsed Steering ===
@@ -68,23 +71,57 @@ class GusanoSteering {
       PVector toMouse = new PVector(mouseX - cabeza.x, mouseY - cabeza.y);
       toMouse.normalize();
 
+      // Remember user presence for lingering curiosity
+      if (mouseSpeed < 6) {
+        g.lastUserSeenMs = millis();
+        g.userInterest = 1.0;
+      }
+      float fearMem = g.fearMemory * exp(-(millis() - g.lastFearUserMs) / FEAR_MEMORY_MS);
+
       // Fear gets partial phase bypass (survival)
       float fearPhaseGate = (g.state == Gusano.FEAR) ? lerp(0.6, 1.0, contractCurve) : steerPhaseGate;
       
-      if (g.state == Gusano.FEAR || (mousePressed && dMouse < 100)) {
-        PVector m = PVector.mult(toMouse, -6.0 * fearPhaseGate);
+      if (g.state == Gusano.FEAR || fearMem > 0.05 || (mousePressed && dMouse < 100)) {
+        float fleeScale = 6.0 * fearPhaseGate;
+        if (fearMem > 0.05) fleeScale *= lerp(1.0, FEAR_AVOID_BOOST, fearMem);
+        PVector m = PVector.mult(toMouse, -fleeScale);
         desired.add(m); // Flee from predator
         g.debugSteerMouse.set(m);
-      } else if (g.state == Gusano.CURIOUS && mouseSpeed < 4) {
-        PVector m = PVector.mult(toMouse, 0.7 * steerPhaseGate);
-        desired.add(m);  // Approach strange still object
-        g.debugSteerMouse.set(m);
+      } else {
+        float mem = g.userInterest * exp(-(millis() - g.lastUserSeenMs) / CURIOUS_STICK_MS);
+        if ((g.state == Gusano.CURIOUS || mem > 0.1) && mouseSpeed < 6) {
+          // Gentle approach plus sideways orbit so it feels exploratory
+          float attract = (CURIOUS_ATTRACT + 0.6 * mem) * steerPhaseGate;
+          PVector orbit = new PVector(-toMouse.y, toMouse.x).mult(CURIOUS_ORBIT * mem);
+          PVector m = PVector.mult(toMouse, attract).add(orbit);
+          desired.add(m);
+          g.debugSteerMouse.set(m);
+        }
       }
     }
 
     // --- 3. NEIGHBOR FILTERING (FOV & Attention) ---
     // Prevents network instability by limiting focus to immediate vicinity
     ArrayList<Gusano> neighbors = queryNeighbors(cabeza.x, cabeza.y);
+    // Pair-buddy selection
+    if (g.buddyId < 0 || millis() - g.buddyLockMs > BUDDY_DURATION_MS) {
+      if (g.social > BUDDY_SOCIAL_THR && random(1) < BUDDY_PICK_CHANCE && neighbors.size() > 1) {
+        Gusano pick = null;
+        float best = 1e9;
+        for (Gusano other : neighbors) {
+          if (other == g) continue;
+          float d2 = sq(other.segmentos.get(0).x - cabeza.x) + sq(other.segmentos.get(0).y - cabeza.y);
+          if (d2 < best) {
+            best = d2;
+            pick = other;
+          }
+        }
+        if (pick != null) {
+          g.buddyId = pick.id;
+          g.buddyLockMs = millis();
+        }
+      }
+    }
     int processed = 0;
     float fleeRadius = 220;
     float fleeRadiusSq = fleeRadius * fleeRadius;
@@ -93,6 +130,7 @@ class GusanoSteering {
     
     PVector sep = new PVector(0, 0);
     PVector coh = new PVector(0, 0);
+    Gusano buddy = (g.buddyId >= 0) ? findGusanoById(g.buddyId) : null;
     for (Gusano other : neighbors) {
       if (other == g || processed >= attentionBudget) continue;
       
@@ -128,7 +166,12 @@ class GusanoSteering {
       } 
       // Cohesion: Visual sense (Frontal Cone Only) - phase-gated
       else if (forward.dot(toOther) > viewAngle) {
-        PVector toward = PVector.mult(toOther, 0.4 * steerPhaseGate);
+        float cohW = 0.4;
+        if (buddy != null && other == buddy) {
+          cohW = BUDDY_COH_WEIGHT;
+          processed = attentionBudget; // focus
+        }
+        PVector toward = PVector.mult(toOther, cohW * steerPhaseGate);
         coh.add(toward);
         processed++; 
       }
@@ -193,7 +236,8 @@ class GusanoSteering {
     float wallMag = wallForce.mag();
     if (wallMag > 0.0001) {
       wallForce.normalize();
-      PVector w = PVector.mult(wallForce, avoidW * 3.5 * wallPhaseGate);
+      float frusBoost = 1.0 + g.frustration * FRUSTRATION_WALL_PUSH;
+      PVector w = PVector.mult(wallForce, avoidW * 3.5 * wallPhaseGate * frusBoost);
       desired.add(w);
       g.debugSteerWall.set(w);
       // Reduce wander near walls so turn is decisive
@@ -218,6 +262,13 @@ class GusanoSteering {
     PVector swayVec = PVector.mult(perp, sway * 0.35 * glideSteerScale * steerPhaseGate);
     desired.add(swayVec);
     g.debugSteerSway.set(swayVec);
+
+    // Frustration turn bias: encourage turning away from last clamp direction by adding noise-perp
+    if (g.frustration > 0.1) {
+      float bias = g.frustration * FRUSTRATION_TURN_BOOST;
+      PVector biasVec = new PVector(-forward.y, forward.x).mult(bias * steerPhaseGate);
+      desired.add(biasVec);
+    }
 
     return desired;
   }

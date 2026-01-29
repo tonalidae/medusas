@@ -31,6 +31,13 @@ PVector flowScratch = new PVector(0, 0);
 PVector flowMeanScratch = new PVector(0, 0);
 int lastFlowMeanSample = 0;
 
+// User flow feedback (no on-screen cursor)
+PVector userTouchPos = new PVector(-1000, -1000);
+PVector userFlowVec = new PVector(0, 0);
+float userTouchStrength = 0;
+float USER_TOUCH_DECAY = 0.90;
+float USER_FLOW_SMOOTH = 0.18;
+
 void initWakeGrid() {
   wake = new float[gridW][gridH];
   wakeNext = new float[gridW][gridH];
@@ -53,6 +60,7 @@ void depositWakePoint(float x, float y, float amount) {
 }
 
 void depositWakeBlob(float x, float y, float radius, float amount) {
+  recordUserImpact(x, y, amount);
   int gx = gridX(x);
   int gy = gridY(y);
   float cellW = width / (float)gridW;
@@ -98,6 +106,13 @@ float sampleWakeBilinearGrid(float gx, float gy) {
   float vx0 = lerp(v00, v10, fx);
   float vx1 = lerp(v01, v11, fx);
   return lerp(vx0, vx1, fy);
+}
+
+// Track interaction so flow feedback can push back (non-visual)
+void recordUserImpact(float x, float y, float amount) {
+  if (!useUserFlowFeedback) return;
+  userTouchPos.set(x, y);
+  userTouchStrength = min(1.2, userTouchStrength + abs(amount) * 0.35);
 }
 
 void sampleAmbientCurrentGrid(float gx, float gy, PVector out) {
@@ -455,6 +470,19 @@ void drawWaterInteraction() {
       ellipse(particleX, particleY, 2.5, 2.5);
     }
   }
+}
+
+// Update flow feedback so the fluid "pushes back" without drawing a cursor
+void updateUserFlowFeedback() {
+  if (!useUserFlowFeedback) return;
+  // decay interaction influence
+  userTouchStrength *= USER_TOUCH_DECAY;
+  if (userTouchStrength < 0.01) {
+    userTouchStrength = 0;
+    return;
+  }
+  sampleFlow(userTouchPos.x, userTouchPos.y, flowScratch);
+  userFlowVec.lerp(flowScratch, USER_FLOW_SMOOTH);
 }
 
 void drawWakeGrid() {
