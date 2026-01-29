@@ -145,6 +145,11 @@ float ENERGY_CALM_BONUS = 2.0;       // recovery multiplier when CALM
 float ENERGY_LOW_DRAG_BOOST = 0.25;  // extra drag when tired (1-energy) * this
 float ENERGY_MAXSPEED_SCALE = 0.3;   // fraction of maxSpeed lost when fully tired
 
+// --- Field fear tuning ---
+float FIELD_FEAR_STARTLE_THRESHOLD = 0.6; // field value required to trigger fear
+float FIELD_FEAR_THREAT_MIN = 0.25;       // threat signal minimum to accept the field startle
+int FIELD_FEAR_HOLD_FRAMES = 6;           // consecutive frames of high field fear before startle
+
 // --- Buddy / micro-cohesion ---
 float BUDDY_SOCIAL_THR = 0.55;
 float BUDDY_PICK_CHANCE = 0.008;   // per frame chance when eligible

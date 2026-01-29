@@ -122,6 +122,7 @@ class Gusano {
   float fearMemory = 0;           // decays after fear to keep some avoidance
   float fieldFear = 0;            // sampled fear field
   float fieldCalm = 0;            // sampled calm field
+  int fieldFearHoldFrames = 0;
   float energy = 1.0;             // 0..1 fatigue meter
   int buddyId = -1;
   int buddyLockMs = -9999;
@@ -307,13 +308,22 @@ class Gusano {
           vel.add(PVector.mult(away, 3.5));
         }
         if (stateCooldown <= 0) {
-          // Personality lock: only aggressive personalities react with AGGRESSIVE.
-          if (baseMood == AGGRESSIVE && state != AGGRESSIVE) {
-            lastFearReason = "MOUSE_HIT_AGG";
+          if (baseMood == AGGRESSIVE) {
+            // Keep the original aggressive response for dominant archetypes.
+            if (state != AGGRESSIVE) {
+              lastFearReason = "MOUSE_HIT_AGG";
+              lastFearTime = millis();
+              stateCooldown = random(3.0, 6.0);
+              fearCooldownFrames = int(random(180, 360));
+              mood.setState(AGGRESSIVE, random(2.2, 3.6));
+            }
+          } else if (state != FEAR) {
+            // Any other archetype should immediately go into FEAR on a hard hit.
+            lastFearReason = "MOUSE_HIT";
             lastFearTime = millis();
             stateCooldown = random(3.0, 6.0);
             fearCooldownFrames = int(random(180, 360));
-            mood.setState(AGGRESSIVE, random(2.2, 3.6));
+            mood.setState(FEAR, random(1.4, 2.4));
           }
         }
       }

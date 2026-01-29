@@ -167,12 +167,18 @@ class GusanoMood {
     g.smoothedProx = lerp(g.smoothedProx, proxRaw, MOOD_EMA_ALPHA);
     g.smoothedCuriosity = lerp(g.smoothedCuriosity, curiosityRaw, MOOD_EMA_ALPHA);
     // --- End Mood Stabilizer ---
+    float threatScore = max(threatRaw, g.smoothedThreat);
+    if (fieldFear > FIELD_FEAR_STARTLE_THRESHOLD && threatScore > FIELD_FEAR_THREAT_MIN) {
+      g.fieldFearHoldFrames++;
+    } else {
+      g.fieldFearHoldFrames = 0;
+    }
+    boolean fieldFearStartle = g.fieldFearHoldFrames >= FIELD_FEAR_HOLD_FRAMES;
     boolean randomEligible = wallProx < 0.5 &&
                              g.debugVmagNow < 0.6 * g.maxSpeed &&
                              millis() > 3000 &&
                              g.postFearTimer <= 0;
     boolean randomFear = randomEligible && random(1) < 0.00005;
-    boolean fieldFearStartle = fieldFear > 0.35;
     boolean startle = speedSpike || randomFear;
     if (fieldFearStartle) startle = true;
     if (startle && g.state != Gusano.FEAR && g.stateCooldown <= 0 && g.fearCooldownFrames <= 0) {
@@ -181,6 +187,7 @@ class GusanoMood {
       g.lastFearTime = millis();
       g.stateCooldown = random(3.0, 6.0);
       g.fearCooldownFrames = int(random(180, 360));
+      g.fieldFearHoldFrames = 0;
       if (shouldTransition(Gusano.FEAR, "startle:" + g.lastFearReason, true,
                            neighborCount, proxValid, proxRaw, threatRaw, wallProx)) {
         setState(Gusano.FEAR, random(1.4, 2.4));
