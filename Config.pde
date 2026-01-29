@@ -61,6 +61,9 @@ int handStillMs = 0;
 int lastHandFrameMs = 0;
 float HAND_STILL_SPEED = 3.5;      // px/frame speed considered still
 int HAND_STILL_DWELL_MS = 220;     // dwell time to become engaged
+float HAND_RELEASE_WAKE_SPEED = 7.0;   // speed that counts as a "launch" from press
+float HAND_RELEASE_WAKE_MULT = 1.6;    // strength multiplier for launch trail
+int HAND_RELEASE_WAKE_STEPS = 8;       // number of blobs along the first movement segment
 
 
 ArrayList<Gusano> gusanos;

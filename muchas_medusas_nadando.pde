@@ -1008,7 +1008,9 @@ void oscEvent(OscMessage msg) {
     boolean[] used = new boolean[prevHandPoints.length];
     float proximityBest = 0; // track strongest proximity estimate this frame
     float primaryX = -1, primaryY = -1, primarySpeed = 0;
+    float primaryPrevX = -1, primaryPrevY = -1;
     boolean primarySet = false;
+    boolean primaryHadPrev = false;
 
     for (int h = 0; h < numHands; h++) {
       // Map the incoming index-finger to the same slot as before: (hand * 6) + 1
@@ -1061,13 +1063,15 @@ void oscEvent(OscMessage msg) {
       proximityBest = max(proximityBest, prox);
       used[pointIndex] = true;
 
-      if (prevHandPoints[pointIndex] == null) {
-        prevHandPoints[pointIndex] = new PVector(x, y);
-        prevHandPoints[pointIndex].set(x, y);
-        continue;
+      PVector prev = prevHandPoints[pointIndex];
+      if (prev == null) {
+        prev = new PVector(x, y);
+        prevHandPoints[pointIndex] = prev;
       }
 
-      float speed = dist(x, y, prevHandPoints[pointIndex].x, prevHandPoints[pointIndex].y);
+      float prevX = prev.x;
+      float prevY = prev.y;
+      float speed = dist(x, y, prevX, prevY);
       // Only deposit wake if hand is considered "near"
       if (handNear && speed > 2.0) {
         float radius = map(speed, 0, 60, 25, 65);
@@ -1089,6 +1093,9 @@ void oscEvent(OscMessage msg) {
       primaryY = y;
       primarySpeed = speed;
       primarySet = true;
+      primaryPrevX = prevX;
+      primaryPrevY = prevY;
+      primaryHadPrev = true;
     }
 
     // Clear any leftover points from previous frames that we are not using now
@@ -1104,6 +1111,9 @@ void oscEvent(OscMessage msg) {
     } else if (handNear && handProximitySmoothed <= HAND_FAR_THR) {
       handNear = false;
     }
+
+    boolean wasEngaged = handEngaged;
+    boolean launchMove = wasEngaged && primarySet && primarySpeed >= HAND_RELEASE_WAKE_SPEED;
 
     // Engagement: still + near counts as a press
     if (handNear && primarySet && primarySpeed < HAND_STILL_SPEED) {
@@ -1123,6 +1133,17 @@ void oscEvent(OscMessage msg) {
     if (handEngaged && primarySet) {
       float pressRadius = map(handProximitySmoothed, 0, 1, 35, 70);
       depositWakeBlob(primaryX, primaryY, pressRadius, userDeposit * 1.1);
+    }
+
+    // On launch from a press, lay down an initial trail burst
+    if (launchMove && primarySet && primaryHadPrev) {
+      for (int i = 0; i < HAND_RELEASE_WAKE_STEPS; i++) {
+        float t = (float)i / (float)(HAND_RELEASE_WAKE_STEPS - 1);
+        float px = lerp(primaryPrevX, primaryX, t);
+        float py = lerp(primaryPrevY, primaryY, t);
+        float radius = lerp(45, 70, t);
+        depositWakeBlob(px, py, radius, userDeposit * HAND_RELEASE_WAKE_MULT);
+      }
     }
   }
 }
