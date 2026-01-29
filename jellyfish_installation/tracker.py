@@ -43,17 +43,18 @@ try:
         # 3. Extract & Send Data (support up to 2 hands, sent in left->right order)
         if results.multi_hand_landmarks:
             hands_list = []
-            key_indices = [4, 8, 12, 16, 20, 9]
+            # Only send the index-finger tip (landmark 8) per hand
+            # Send x, y, z so Processing can be depth-sensitive
+            key_indices = [8]
             # Collect per-hand data and a sort key (avg x)
             for hand_landmarks in results.multi_hand_landmarks:
                 osc_data_hand = []
-                avg_x = 0.0
-                for idx in key_indices:
-                    lm = hand_landmarks.landmark[idx]
-                    osc_data_hand.append(lm.x)
-                    osc_data_hand.append(lm.y)
-                    avg_x += lm.x
-                avg_x /= float(len(key_indices))
+                # use the index fingertip (x,y,z) as the representative point and sort key
+                lm = hand_landmarks.landmark[key_indices[0]]
+                osc_data_hand.append(lm.x)
+                osc_data_hand.append(lm.y)
+                osc_data_hand.append(lm.z)
+                avg_x = lm.x
                 hands_list.append((avg_x, osc_data_hand, hand_landmarks))
 
             # Sort left-to-right (image coords), then flatten
@@ -66,7 +67,7 @@ try:
                 for idx in key_indices:
                     lm = hand_landmarks.landmark[idx]
                     cx, cy = int(lm.x * w), int(lm.y * h)
-                    color = (0, 255, 0) if idx == 9 else (255, 0, 255)
+                    color = (0, 255, 0)
                     cv2.circle(image, (cx, cy), 8, color, cv2.FILLED)
 
             # Send single flat list: [hand1_x1,hand1_y1,...,handN_x6,handN_y6]

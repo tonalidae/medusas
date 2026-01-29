@@ -9,6 +9,8 @@ float wakeDiffuse = 0.20;
 float wakeDeposit = 1.0;
 float userDeposit = 2.0;
 float wakeClamp = 8.0;          // Cap wake intensity to avoid runaway blobs (<=0 disables)
+float wakeTension = 0.06;       // Surface-tension style curvature feedback (0 = off)
+float wakeCurlStrength = 0.12;  // Small rotational kick to keep ripples swirling
 
 // Flow shaping
 float swirlStrength = 0.6;
@@ -130,6 +132,11 @@ void sampleFlowGridAt(float gx, float gy, PVector out) {
   float flowX = (-gradY * swirlStrength) + (gradX * pushStrength);
   float flowY = (gradX * swirlStrength) + (gradY * pushStrength);
 
+  // Lightweight curl: difference of opposing gradients injects a gentle spin
+  float curl = (wake[x2][iy] - wake[x1][iy]) - (wake[ix][y2] - wake[ix][y1]);
+  flowX += -curl * wakeCurlStrength;
+  flowY +=  curl * wakeCurlStrength;
+
   if (useAmbientCurrent) {
     float nx = noise(gx * ambientCurrentScale, gy * ambientCurrentScale, t * ambientCurrentTime) - 0.5;
     float ny = noise(gx * ambientCurrentScale + 100.0, gy * ambientCurrentScale + 100.0, t * ambientCurrentTime) - 0.5;
@@ -226,9 +233,29 @@ void updateWakeGrid() {
       wakeNext[x][y] = v;
     }
   }
-  float[][] tmp = wake;
-  wake = wakeNext;
-  wakeNext = tmp;
+  // 3) Surface-tension feedback: shallow curvature pull that keeps ripples tight
+  if (wakeTension > 0.0) {
+    for (int x = 0; x < gridW; x++) {
+      for (int y = 0; y < gridH; y++) {
+        float c = wakeNext[x][y];
+        float l = wakeNext[max(0, x - 1)][y];
+        float r = wakeNext[min(gridW - 1, x + 1)][y];
+        float u = wakeNext[x][max(0, y - 1)];
+        float d = wakeNext[x][min(gridH - 1, y + 1)];
+        float laplacian = (l + r + u + d) - (4.0 * c);
+        float v = c + laplacian * wakeTension;
+        if (wakeClamp > 0) v = min(wakeClamp, v);
+        wake[x][y] = v;
+      }
+    }
+    float[][] tmp = wakeNext;
+    wakeNext = wake;
+    wake = tmp;
+  } else {
+    float[][] tmp = wake;
+    wake = wakeNext;
+    wakeNext = tmp;
+  }
 }
 
 PVector sampleWakeGradient(float x, float y) {
@@ -298,33 +325,39 @@ void drawWaterInteraction() {
     for (int y = 0; y < gridH; y++) {
       float v = wake[x][y];
       if (v <= 0.01) continue;
-      float a = constrain(v * WATER_INK_ALPHA_SCALE, 0, 90);
+      float dx = wake[min(gridW - 1, x + 1)][y] - wake[max(0, x - 1)][y];
+      float dy = wake[x][min(gridH - 1, y + 1)] - wake[x][max(0, y - 1)];
+      float edge = constrain(sqrt(dx * dx + dy * dy) * 0.5, 0, 1);
+      float a = constrain(v * WATER_INK_ALPHA_SCALE * (0.6 + edge * 0.8), 0, 90);
       fill(40, 90, 140, a);
       rect(x * cellW, y * cellH, cellW + 1, cellH + 1);
     }
   }
 
   // --- Flow-aligned strokes (direction layer) ---
-  int cols = 48;
-  int rows = 30;
-  float stepW = width / (float)cols;
-  float stepH = height / (float)rows;
-  for (int ix = 0; ix < cols; ix++) {
-    float x = (ix + 0.5) * stepW;
-    for (int iy = 0; iy < rows; iy++) {
-      float y = (iy + 0.5) * stepH;
-      float w = sampleWakeAt(x, y);
-      if (w <= 0.02) continue;
-      sampleFlow(x, y, flowScratch);
-      float m2 = flowScratch.magSq();
-      if (m2 < 0.0001) continue;
-      flowScratch.normalize();
-      float len = lerp(3, 12, constrain(w * 0.6, 0, 1));
-      float a = constrain(w * WATER_STROKE_ALPHA_SCALE * 10.0, 0, 80);
-      stroke(60, 130, 190, a);
-      strokeWeight(1);
-      line(x - flowScratch.x * len * 0.5, y - flowScratch.y * len * 0.5,
-           x + flowScratch.x * len * 0.5, y + flowScratch.y * len * 0.5);
+  if (debugFlow) {
+    int cols = 48;
+    int rows = 30;
+    float stepW = width / (float)cols;
+    float stepH = height / (float)rows;
+    for (int ix = 0; ix < cols; ix++) {
+      float x = (ix + 0.5) * stepW;
+      for (int iy = 0; iy < rows; iy++) {
+        float y = (iy + 0.5) * stepH;
+        float w = sampleWakeAt(x, y);
+        if (w <= 0.02) continue;
+        sampleFlow(x, y, flowScratch);
+        float m2 = flowScratch.magSq();
+        if (m2 < 0.0001) continue;
+        flowScratch.normalize();
+        float len = lerp(3, 12, constrain(w * 0.6, 0, 1));
+        float edge = sampleWakeGradient(x, y).mag();
+        float a = constrain(w * WATER_STROKE_ALPHA_SCALE * 10.0 * (0.5 + edge), 0, 80);
+        stroke(60, 130, 190, a);
+        strokeWeight(1);
+        line(x - flowScratch.x * len * 0.5, y - flowScratch.y * len * 0.5,
+             x + flowScratch.x * len * 0.5, y + flowScratch.y * len * 0.5);
+      }
     }
   }
 
@@ -341,7 +374,8 @@ void drawWaterInteraction() {
       if (w <= 0.03) continue;
       float sparkle = noise(x * 0.01, y * 0.01, t * 0.4);
       if (sparkle < 0.72) continue;
-      float a = constrain(w * WATER_CAUSTIC_ALPHA_SCALE * 12.0, 0, 70);
+      float edge = sampleWakeGradient(x, y).mag();
+      float a = constrain(w * WATER_CAUSTIC_ALPHA_SCALE * 12.0 * (0.4 + edge), 0, 70);
       stroke(200, 220, 255, a);
       strokeWeight(1);
       point(x + (sparkle - 0.5) * 6, y + (sparkle - 0.5) * 6);

@@ -89,6 +89,8 @@ void draw() {
     for (int i = 0; i < prevHandPoints.length; i++) {
       PVector p = prevHandPoints[i];
       if (p != null) {
+        // Hide visual marker for the index-finger pointer (second pair per hand)
+        if (i % 6 == 1) continue;
         noStroke();
         // Color first hand warm, second hand cool
         if (i < 6) {
@@ -821,35 +823,71 @@ void oscEvent(OscMessage msg) {
     handPresent = true;
     lastHandTime = millis();
 
-    int pointIndex = 0;
-
-    // Loop through arguments in pairs: [x1, y1, x2, y2, ...]
     Object[] args = msg.arguments();
     if (args == null) return;
-    for (int i = 0; i < args.length; i += 2) {
-      if (i + 1 >= args.length) break;
 
-      float x = msg.get(i).floatValue() * width;
-      float y = msg.get(i + 1).floatValue() * height;
+    // Determine incoming format:
+    // - If tracker sends full sets, it'll be 6 landmark pairs per hand (pairsPerHand=6)
+    // - If tracker sends only the index fingertip, it'll be 1 pair per hand (pairsPerHand=1)
+    // Detect whether tracker sends pairs or triplets: (x,y) or (x,y,z)
+    boolean tripletMode = (args.length % 3 == 0);
+    int totalGroups = tripletMode ? args.length / 3 : args.length / 2;
+    int groupsPerHand = (totalGroups % 6 == 0) ? 6 : 1;
+    int numHands = totalGroups / groupsPerHand;
+
+    boolean[] used = new boolean[prevHandPoints.length];
+
+    for (int h = 0; h < numHands; h++) {
+      // Map the incoming index-finger to the same slot as before: (hand * 6) + 1
+      int pointIndex = h * 6 + 1;
+
+      int argIdx;
+      if (groupsPerHand == 6) {
+        // second group within each 6-group hand
+        argIdx = (h * groupsPerHand + 1) * (tripletMode ? 3 : 2);
+      } else {
+        // single group per hand: groups are consecutive per-hand
+        argIdx = h * (tripletMode ? 3 : 2);
+      }
+      if (argIdx + (tripletMode ? 2 : 1) >= args.length) continue;
+
+      float x = msg.get(argIdx).floatValue() * width;
+      float y = msg.get(argIdx + 1).floatValue() * height;
+      float depth = 0.0; // default depth (no effect)
+      if (tripletMode) {
+        depth = msg.get(argIdx + 2).floatValue();
+      }
+      used[pointIndex] = true;
 
       if (prevHandPoints[pointIndex] == null) {
         prevHandPoints[pointIndex] = new PVector(x, y);
+        prevHandPoints[pointIndex].set(x, y);
+        continue;
       }
 
       float speed = dist(x, y, prevHandPoints[pointIndex].x, prevHandPoints[pointIndex].y);
       if (speed > 2.0) {
         float radius = map(speed, 0, 60, 25, 65);
         float force = map(speed, 0, 60, 0.5, 2.5);
-        depositWakeBlob(x, y, radius, userDeposit * 0.4 * force);
+        // If depth is available, map it to an extra multiplier: closer -> stronger
+        float depthScale = 1.0;
+        if (tripletMode) {
+          // MediaPipe Z is relative; closer tends to be more negative.
+          float closer = -depth; // invert so larger = closer
+          // Map typical closer range (-0.3..0.3) into 0.6..1.8 multiplier
+          depthScale = constrain(map(closer, -0.3, 0.3, 0.6, 1.8), 0.4, 2.5);
+          // Optionally scale radius a bit with depth
+          radius *= map(depthScale, 0.4, 2.5, 0.8, 1.4);
+        }
+        depositWakeBlob(x, y, radius, userDeposit * 0.4 * force * depthScale);
       }
 
       prevHandPoints[pointIndex].set(x, y);
-      pointIndex++;
-      if (pointIndex >= prevHandPoints.length) break;
     }
-      // Clear any leftover points from previous frame (when fewer points are sent)
-      for (int j = pointIndex; j < prevHandPoints.length; j++) {
-        prevHandPoints[j] = null;
-      }
+
+    // Clear any leftover points from previous frames that we are not using now
+    for (int j = 0; j < prevHandPoints.length; j++) {
+      if (!used[j]) prevHandPoints[j] = null;
+    }
   }
 }

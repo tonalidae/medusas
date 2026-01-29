@@ -579,8 +579,14 @@ class Gusano {
 
     prevSpeed = vmag;
 
-    float deposit = wakeDeposit * (0.5 + vmag * 0.2);
-    depositWakePoint(cabeza.x, cabeza.y, deposit);
+    // Phase-gated wake deposition: only strong during contraction or fast motion
+    float phaseGate = constrain((contractCurve - 0.5) * 2.0, 0, 1); // rises when contractCurve > 0.5
+    float speedGate = constrain(map(vmag, 1.5, 7.0, 0, 1), 0, 1);
+    float depositGate = max(phaseGate, speedGate * 0.8);
+    if (depositGate > 0.001) {
+      float deposit = wakeDeposit * depositGate * (0.6 + vmag * 0.25);
+      depositWakePoint(cabeza.x, cabeza.y, deposit);
+    }
   }
 
   // Contraction amount: 0..1 with contract/hold/release shaping
