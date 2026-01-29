@@ -82,6 +82,9 @@ void draw() {
   if (millis() - lastHandTime > HAND_TIMEOUT_MS) {
     handPresent = false;
     handNear = false;
+    handEngaged = false;
+    handStillMs = 0;
+    lastHandFrameMs = 0;
     handProximity = 0;
     handProximitySmoothed = 0;
     // Reset points so the next touch doesn't create a "teleport" splash
@@ -983,6 +986,10 @@ void drawBiologicalVectorDebug() {
 void oscEvent(OscMessage msg) {
   // Accept variable-length argument lists under /hand
   if (msg.checkAddrPattern("/hand")) {
+    int nowMs = millis();
+    int dtMs = (lastHandFrameMs == 0) ? 16 : (nowMs - lastHandFrameMs);
+    lastHandFrameMs = nowMs;
+
     handPresent = true;
     lastHandTime = millis();
 
@@ -1000,6 +1007,8 @@ void oscEvent(OscMessage msg) {
 
     boolean[] used = new boolean[prevHandPoints.length];
     float proximityBest = 0; // track strongest proximity estimate this frame
+    float primaryX = -1, primaryY = -1, primarySpeed = 0;
+    boolean primarySet = false;
 
     for (int h = 0; h < numHands; h++) {
       // Map the incoming index-finger to the same slot as before: (hand * 6) + 1
@@ -1075,6 +1084,11 @@ void oscEvent(OscMessage msg) {
       }
 
       prevHandPoints[pointIndex].set(x, y);
+      // Track primary pointer (index fingertip) for engagement logic
+      primaryX = x;
+      primaryY = y;
+      primarySpeed = speed;
+      primarySet = true;
     }
 
     // Clear any leftover points from previous frames that we are not using now
@@ -1089,6 +1103,26 @@ void oscEvent(OscMessage msg) {
       handNear = true;
     } else if (handNear && handProximitySmoothed <= HAND_FAR_THR) {
       handNear = false;
+    }
+
+    // Engagement: still + near counts as a press
+    if (handNear && primarySet && primarySpeed < HAND_STILL_SPEED) {
+      handStillMs += dtMs;
+    } else {
+      handStillMs = 0;
+    }
+    if (!handEngaged && handStillMs >= HAND_STILL_DWELL_MS) {
+      handEngaged = true;
+    }
+    if (handEngaged && (!handNear || !primarySet || primarySpeed > HAND_STILL_SPEED * 1.8)) {
+      handEngaged = false;
+      handStillMs = 0;
+    }
+
+    // Deposit a softer blob when engaged (press)
+    if (handEngaged && primarySet) {
+      float pressRadius = map(handProximitySmoothed, 0, 1, 35, 70);
+      depositWakeBlob(primaryX, primaryY, pressRadius, userDeposit * 1.1);
     }
   }
 }

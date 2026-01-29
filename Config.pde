@@ -47,13 +47,20 @@ int lastHandTime = 0;
 boolean handNear = false;      // True when user's hand is close enough to interact
 float handProximity = 0;       // 0..1 estimate of closeness
 float handProximitySmoothed = 0;
-float HAND_NEAR_THR = 0.11;    // Hysteresis thresholds for proximity gate
-float HAND_FAR_THR = 0.08;
+float HAND_NEAR_THR = 0.075;   // Hysteresis thresholds for proximity gate (tuned for smaller hands)
+float HAND_FAR_THR = 0.05;
 float HAND_PROX_ALPHA = 0.2;
 boolean HAND_FLIP_X = true;    // Flip horizontal when camera faces the screen
 boolean HAND_FLIP_Y = false;   // Set true if camera is upside-down
 
 int HAND_TIMEOUT_MS = 1000;
+
+// Engagement model: a still, near hand counts as a "press"
+boolean handEngaged = false;
+int handStillMs = 0;
+int lastHandFrameMs = 0;
+float HAND_STILL_SPEED = 3.5;      // px/frame speed considered still
+int HAND_STILL_DWELL_MS = 220;     // dwell time to become engaged
 
 
 ArrayList<Gusano> gusanos;
