@@ -19,7 +19,7 @@ boolean useWaterFrames = true;
 boolean showWaterTex = true;
 boolean showWaterInteraction = true; // render wake-based water ink/strokes/caustics
 // Blend mode choice: false -> BLEND (subtle), true -> SCREEN (gentle brighten)
-boolean useScreenBlend = false;
+boolean useScreenBlend = true;
 float waterAlpha = 25; // tint alpha when drawing overlay (0-255) — lowered for greater transparency
 float waterFPS = 12.0;
 OscP5 oscP5;
@@ -35,6 +35,14 @@ PVector[] prevHandPoints = new PVector[12];
 
 boolean handPresent = false;
 int lastHandTime = 0;
+boolean handNear = false;      // True when user's hand is close enough to interact
+float handProximity = 0;       // 0..1 estimate of closeness
+float handProximitySmoothed = 0;
+float HAND_NEAR_THR = 0.11;    // Hysteresis thresholds for proximity gate
+float HAND_FAR_THR = 0.08;
+float HAND_PROX_ALPHA = 0.2;
+boolean HAND_FLIP_X = true;    // Flip horizontal when camera faces the screen
+boolean HAND_FLIP_Y = false;   // Set true if camera is upside-down
 
 int HAND_TIMEOUT_MS = 1000;
 
@@ -63,9 +71,10 @@ boolean debugCycles = false;
 boolean debugBiologicalVectors = false;
 
 // --- Water interaction rendering ---
-float WATER_INK_ALPHA_SCALE = 18.0;     // Dominant layer (mass)
-float WATER_STROKE_ALPHA_SCALE = 8.0;   // Direction layer (~30-40%)
-float WATER_CAUSTIC_ALPHA_SCALE = 5.0;  // Sparkle layer (~20-30%)
+// Tone down water overlay alpha scales so background gradient remains visible
+float WATER_INK_ALPHA_SCALE = 10.0;     // Dominant layer (mass)
+float WATER_STROKE_ALPHA_SCALE = 4.0;   // Direction layer (~30-40%)
+float WATER_CAUSTIC_ALPHA_SCALE = 2.5;  // Sparkle layer (~20-30%)
 
 
 

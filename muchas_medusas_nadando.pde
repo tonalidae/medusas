@@ -72,6 +72,9 @@ void draw() {
   // 1. Hand Timeout
   if (millis() - lastHandTime > HAND_TIMEOUT_MS) {
     handPresent = false;
+    handNear = false;
+    handProximity = 0;
+    handProximitySmoothed = 0;
     // Reset points so the next touch doesn't create a "teleport" splash
     for(int i=0; i<prevHandPoints.length; i++) prevHandPoints[i] = null;
   }
@@ -836,6 +839,7 @@ void oscEvent(OscMessage msg) {
     int numHands = totalGroups / groupsPerHand;
 
     boolean[] used = new boolean[prevHandPoints.length];
+    float proximityBest = 0; // track strongest proximity estimate this frame
 
     for (int h = 0; h < numHands; h++) {
       // Map the incoming index-finger to the same slot as before: (hand * 6) + 1
@@ -851,12 +855,41 @@ void oscEvent(OscMessage msg) {
       }
       if (argIdx + (tripletMode ? 2 : 1) >= args.length) continue;
 
-      float x = msg.get(argIdx).floatValue() * width;
-      float y = msg.get(argIdx + 1).floatValue() * height;
+      float xn = msg.get(argIdx).floatValue();
+      float yn = msg.get(argIdx + 1).floatValue();
+      if (HAND_FLIP_X) xn = 1.0 - xn;
+      if (HAND_FLIP_Y) yn = 1.0 - yn;
+      float x = xn * width;
+      float y = yn * height;
       float depth = 0.0; // default depth (no effect)
+      float proxDepth = 0.0;
       if (tripletMode) {
         depth = msg.get(argIdx + 2).floatValue();
+        // MediaPipe depth: more negative -> closer. Invert so farther (toward screen) counts as nearer.
+        proxDepth = constrain(map(-depth, -0.2, 0.4, 1.0, 0.0), 0.0, 1.0);
       }
+
+      // If we have 6 landmarks per hand, estimate on-screen size as proximity cue
+      float proxSize = 0.0;
+      if (groupsPerHand == 6) {
+        float minX = 1e9, minY = 1e9, maxX = -1e9, maxY = -1e9;
+        for (int k = 0; k < 6; k++) {
+          int idx = (h * groupsPerHand + k) * (tripletMode ? 3 : 2);
+          if (idx + 1 >= args.length) break;
+          float px = msg.get(idx).floatValue();
+          float py = msg.get(idx + 1).floatValue();
+          if (HAND_FLIP_X) px = 1.0 - px;
+          if (HAND_FLIP_Y) py = 1.0 - py;
+          minX = min(minX, px);
+          maxX = max(maxX, px);
+          minY = min(minY, py);
+          maxY = max(maxY, py);
+        }
+        float diag = dist(minX, minY, maxX, maxY); // normalized 0..1 coordinates
+        proxSize = constrain(diag * 1.6, 0.0, 1.0); // amplify a bit
+      }
+      float prox = max(proxDepth, proxSize);
+      proximityBest = max(proximityBest, prox);
       used[pointIndex] = true;
 
       if (prevHandPoints[pointIndex] == null) {
@@ -866,17 +899,16 @@ void oscEvent(OscMessage msg) {
       }
 
       float speed = dist(x, y, prevHandPoints[pointIndex].x, prevHandPoints[pointIndex].y);
-      if (speed > 2.0) {
+      // Only deposit wake if hand is considered "near"
+      if (handNear && speed > 2.0) {
         float radius = map(speed, 0, 60, 25, 65);
         float force = map(speed, 0, 60, 0.5, 2.5);
         // If depth is available, map it to an extra multiplier: closer -> stronger
         float depthScale = 1.0;
         if (tripletMode) {
-          // MediaPipe Z is relative; closer tends to be more negative.
-          float closer = -depth; // invert so larger = closer
-          // Map typical closer range (-0.3..0.3) into 0.6..1.8 multiplier
-          depthScale = constrain(map(closer, -0.3, 0.3, 0.6, 1.8), 0.4, 2.5);
-          // Optionally scale radius a bit with depth
+          // More distant from camera (toward the screen) gets stronger interaction.
+          float farther = -depth;
+          depthScale = constrain(map(farther, -0.3, 0.3, 1.8, 0.6), 0.4, 2.5);
           radius *= map(depthScale, 0.4, 2.5, 0.8, 1.4);
         }
         depositWakeBlob(x, y, radius, userDeposit * 0.4 * force * depthScale);
@@ -888,6 +920,15 @@ void oscEvent(OscMessage msg) {
     // Clear any leftover points from previous frames that we are not using now
     for (int j = 0; j < prevHandPoints.length; j++) {
       if (!used[j]) prevHandPoints[j] = null;
+    }
+
+    // Update proximity state with hysteresis to avoid flicker
+    handProximity = proximityBest;
+    handProximitySmoothed = lerp(handProximitySmoothed, handProximity, HAND_PROX_ALPHA);
+    if (!handNear && handProximitySmoothed >= HAND_NEAR_THR) {
+      handNear = true;
+    } else if (handNear && handProximitySmoothed <= HAND_FAR_THR) {
+      handNear = false;
     }
   }
 }
