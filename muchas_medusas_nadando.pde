@@ -65,6 +65,9 @@ void draw() {
   lastMouseY = mouseY;
 
   updateWakeGrid();
+  if (showWaterInteraction) {
+    drawWaterInteraction();
+  }
   rebuildSpatialGrid();
   // 1. Hand Timeout
   if (millis() - lastHandTime > HAND_TIMEOUT_MS) {

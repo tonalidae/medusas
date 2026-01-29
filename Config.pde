@@ -17,6 +17,7 @@ boolean waterFramesWarned = false;
 // Simple controls
 boolean useWaterFrames = true;
 boolean showWaterTex = true;
+boolean showWaterInteraction = true; // render wake-based water ink/strokes/caustics
 // Blend mode choice: false -> BLEND (subtle), true -> SCREEN (gentle brighten)
 boolean useScreenBlend = false;
 float waterAlpha = 25; // tint alpha when drawing overlay (0-255) — lowered for greater transparency
@@ -60,6 +61,11 @@ boolean debugJumps = false;
 boolean AUTO_HEAL_NANS = false;
 boolean debugCycles = false;
 boolean debugBiologicalVectors = false;
+
+// --- Water interaction rendering ---
+float WATER_INK_ALPHA_SCALE = 18.0;     // Dominant layer (mass)
+float WATER_STROKE_ALPHA_SCALE = 8.0;   // Direction layer (~30-40%)
+float WATER_CAUSTIC_ALPHA_SCALE = 5.0;  // Sparkle layer (~20-30%)
 
 
 
