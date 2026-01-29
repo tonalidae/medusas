@@ -39,9 +39,13 @@ float remoteSmoothX = -1000;
 float remoteSmoothY = -1000;
 
 // --- VOLUMETRIC INTERACTION VARS ---
-// Stores previouspositions for up to 12 tracked points (2 hands × 6 points)
-PVector[] prevHandPoints = new PVector[12];
-float[] prevHandDepth = new float[12];
+// Hand tracking configuration
+final int MAX_HANDS = 6;              // persistent slots 0..5
+final int HAND_POINTS_PER_HAND = 6;   // keep legacy per-hand stride
+// Stores previous positions for up to MAX_HANDS × HAND_POINTS_PER_HAND points
+PVector[] prevHandPoints = new PVector[MAX_HANDS * HAND_POINTS_PER_HAND];
+float[] prevHandDepth = new float[MAX_HANDS * HAND_POINTS_PER_HAND];
+float[] handSizes = new float[MAX_HANDS];   // bbox size cue per slot
 
 boolean handPresent = false;
 int lastHandTime = 0;
@@ -92,15 +96,15 @@ int MIN_TAP_DIST = 25;
 int MIN_TAP_GAP_MS = 220;
 int TAP_DEPTH_STABLE_MS = 80;
 // Per-hand debounce
-int[] handTapCount = new int[2];
-int[] handTapLastMs = new int[2];
+int[] handTapCount = new int[MAX_HANDS];
+int[] handTapLastMs = new int[MAX_HANDS];
 int pendingTapHand = -1;
 int pendingTapStartMs = -9999;
 int lastUserAggMs = -9999; // last time user acted aggressively (harsh/tap scare)
 
 // Friendly interaction accumulation (hand tracker)
-float[] handFriendlyMs = new float[2];
-int[] handFriendlyStableMs = new int[2];
+float[] handFriendlyMs = new float[MAX_HANDS];
+int[] handFriendlyStableMs = new int[MAX_HANDS];
 float FRIEND_SPEED_THR = 3.0;
 int FRIEND_DEPTH_STABLE_MS = 80;
 float FRIEND_AFFINITY_RATE = 0.0022; // per second of gentle presence (boosted affection)

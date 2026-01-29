@@ -1095,273 +1095,301 @@ void drawBiologicalVectorDebug() {
   }
 
 // --- OSC EVENT: VOLUMETRIC HAND TRACKING ---
-void oscEvent(OscMessage msg) {
-  // Accept variable-length argument lists under /hand
-  if (msg.checkAddrPattern("/hand")) {
-    int nowMs = millis();
-    int dtMs = (lastHandFrameMs == 0) ? 16 : (nowMs - lastHandFrameMs);
-    lastHandFrameMs = nowMs;
+// Shared hand-frame processing (works for /hands fixed schema and legacy /hand)
+void processHandSamples(int[] slots, float[] xs, float[] ys, float[] zs, boolean[] presentSlots, int sampleCount, boolean hasDepth) {
+  int nowMs = millis();
+  int dtMs = (lastHandFrameMs == 0) ? 16 : (nowMs - lastHandFrameMs);
+  lastHandFrameMs = nowMs;
 
-    handPresent = true;
-    lastHandTime = millis();
+  boolean anyPresent = false;
+  boolean[] used = new boolean[prevHandPoints.length];
+  float proximityBest = 0;
+  float primaryX = -1, primaryY = -1, primarySpeed = 0;
+  float primaryPrevX = -1, primaryPrevY = -1;
+  float primaryDepth = 0, primaryPrevDepth = 0;
+  boolean primarySet = false;
+  boolean primaryHadPrev = false;
+  boolean primaryHasDepth = false;
+  boolean primaryHadPrevDepth = false;
+  int primaryHand = 0;
 
-    Object[] args = msg.arguments();
-    if (args == null) return;
+  for (int i = 0; i < sampleCount; i++) {
+    int h = slots[i];
+    if (h < 0 || h >= MAX_HANDS) continue;
+    if (!presentSlots[h]) continue;
+    int pointIndex = h * HAND_POINTS_PER_HAND + 1;
+    if (pointIndex >= prevHandPoints.length) continue;
+    anyPresent = true;
+    float xn = xs[i];
+    float yn = ys[i];
+    if (HAND_FLIP_X) xn = 1.0 - xn;
+    if (HAND_FLIP_Y) yn = 1.0 - yn;
+    float x = xn * width;
+    float y = yn * height;
+    float depth = hasDepth ? zs[i] : 0.0;
+    float proxDepth = hasDepth ? constrain(map(-depth, -0.2, 0.4, 1.0, 0.0), 0.0, 1.0) : 0.0;
+    float proxSize = handSizes[h];
+    float prox = max(proxDepth, proxSize);
+    proximityBest = max(proximityBest, prox);
+    used[pointIndex] = true;
 
-    // Determine incoming format:
-    // - If tracker sends full sets, it'll be 6 landmark pairs per hand (pairsPerHand=6)
-    // - If tracker sends only the index fingertip, it'll be 1 pair per hand (pairsPerHand=1)
-    // Detect whether tracker sends pairs or triplets: (x,y) or (x,y,z)
-    boolean tripletMode = (args.length % 3 == 0);
-    int totalGroups = tripletMode ? args.length / 3 : args.length / 2;
-    int groupsPerHand = (totalGroups % 6 == 0) ? 6 : 1;
-    int numHands = totalGroups / groupsPerHand;
+    PVector prev = prevHandPoints[pointIndex];
+    if (prev == null) {
+      prev = new PVector(x, y);
+      prevHandPoints[pointIndex] = prev;
+    }
+    float prevDepth = prevHandDepth[pointIndex];
+    boolean hadPrevDepth = hasDepth && prevDepth != 0;
 
-    boolean[] used = new boolean[prevHandPoints.length];
-    float proximityBest = 0; // track strongest proximity estimate this frame
-    float primaryX = -1, primaryY = -1, primarySpeed = 0;
-    float primaryPrevX = -1, primaryPrevY = -1;
-    float primaryDepth = 0, primaryPrevDepth = 0;
-    boolean primarySet = false;
-    boolean primaryHadPrev = false;
-    boolean primaryHasDepth = false;
-    boolean primaryHadPrevDepth = false;
-    int primaryHand = 0;
-
-    for (int h = 0; h < numHands; h++) {
-      // Map the incoming index-finger to the same slot as before: (hand * 6) + 1
-      int pointIndex = h * 6 + 1;
-
-      int argIdx;
-      if (groupsPerHand == 6) {
-        // second group within each 6-group hand
-        argIdx = (h * groupsPerHand + 1) * (tripletMode ? 3 : 2);
-      } else {
-        // single group per hand: groups are consecutive per-hand
-        argIdx = h * (tripletMode ? 3 : 2);
+    float prevX = prev.x;
+    float prevY = prev.y;
+    float speed = dist(x, y, prevX, prevY);
+    if (handNear && speed > 2.0) {
+      float radius = map(speed, 0, 60, 25, 65);
+      float force = map(speed, 0, 60, 0.5, 2.5);
+      float depthScale = 1.0;
+      if (hasDepth) {
+        float farther = -depth;
+        depthScale = constrain(map(farther, -0.3, 0.3, 1.8, 0.6), 0.4, 2.5);
+        radius *= map(depthScale, 0.4, 2.5, 0.8, 1.4);
       }
-      if (argIdx + (tripletMode ? 2 : 1) >= args.length) continue;
+      depositWakeBlob(x, y, radius, userDeposit * 0.4 * force * depthScale);
+    }
 
-      float xn = msg.get(argIdx).floatValue();
-      float yn = msg.get(argIdx + 1).floatValue();
-      if (HAND_FLIP_X) xn = 1.0 - xn;
-      if (HAND_FLIP_Y) yn = 1.0 - yn;
-      float x = xn * width;
-      float y = yn * height;
-      float depth = 0.0; // default depth (no effect)
-      float proxDepth = 0.0;
-      if (tripletMode) {
-        depth = msg.get(argIdx + 2).floatValue();
-        // MediaPipe depth: more negative -> closer. Invert so farther (toward screen) counts as nearer.
-        proxDepth = constrain(map(-depth, -0.2, 0.4, 1.0, 0.0), 0.0, 1.0);
-      }
+    prevHandPoints[pointIndex].set(x, y);
+    prevHandDepth[pointIndex] = depth;
 
-      // If we have 6 landmarks per hand, estimate on-screen size as proximity cue
-      float proxSize = 0.0;
-      if (groupsPerHand == 6) {
-        float minX = 1e9, minY = 1e9, maxX = -1e9, maxY = -1e9;
-        for (int k = 0; k < 6; k++) {
-          int idx = (h * groupsPerHand + k) * (tripletMode ? 3 : 2);
-          if (idx + 1 >= args.length) break;
-          float px = msg.get(idx).floatValue();
-          float py = msg.get(idx + 1).floatValue();
-          if (HAND_FLIP_X) px = 1.0 - px;
-          if (HAND_FLIP_Y) py = 1.0 - py;
-          minX = min(minX, px);
-          maxX = max(maxX, px);
-          minY = min(minY, py);
-          maxY = max(maxY, py);
-        }
-        float diag = dist(minX, minY, maxX, maxY); // normalized 0..1 coordinates
-        proxSize = constrain(diag * 1.6, 0.0, 1.0); // amplify a bit
-      }
-      float prox = max(proxDepth, proxSize);
-      proximityBest = max(proximityBest, prox);
-      used[pointIndex] = true;
-
-      PVector prev = prevHandPoints[pointIndex];
-      if (prev == null) {
-        prev = new PVector(x, y);
-        prevHandPoints[pointIndex] = prev;
-      }
-      float prevDepth = prevHandDepth[pointIndex];
-      boolean hadPrevDepth = tripletMode && prevDepth != 0;
-
-      float prevX = prev.x;
-      float prevY = prev.y;
-      float speed = dist(x, y, prevX, prevY);
-      // Only deposit wake if hand is considered "near"
-      if (handNear && speed > 2.0) {
-        float radius = map(speed, 0, 60, 25, 65);
-        float force = map(speed, 0, 60, 0.5, 2.5);
-        // If depth is available, map it to an extra multiplier: closer -> stronger
-        float depthScale = 1.0;
-        if (tripletMode) {
-          // More distant from camera (toward the screen) gets stronger interaction.
-          float farther = -depth;
-          depthScale = constrain(map(farther, -0.3, 0.3, 1.8, 0.6), 0.4, 2.5);
-          radius *= map(depthScale, 0.4, 2.5, 0.8, 1.4);
-        }
-        depositWakeBlob(x, y, radius, userDeposit * 0.4 * force * depthScale);
-      }
-
-      prevHandPoints[pointIndex].set(x, y);
-      prevHandDepth[pointIndex] = depth;
-      // Track primary pointer (index fingertip) for engagement logic
+    if (!primarySet) {
       primaryX = x;
       primaryY = y;
       primarySpeed = speed;
-      primaryHand = (pointIndex < 6) ? 0 : 1;
+      primaryHand = h;
       primarySet = true;
       primaryPrevX = prevX;
       primaryPrevY = prevY;
       primaryHadPrev = true;
       primaryDepth = depth;
       primaryPrevDepth = prevDepth;
-      primaryHasDepth = tripletMode;
+      primaryHasDepth = hasDepth;
       primaryHadPrevDepth = hadPrevDepth;
     }
+  }
 
-    // Clear any leftover points from previous frames that we are not using now
-    for (int j = 0; j < prevHandPoints.length; j++) {
-      if (!used[j]) {
-        prevHandPoints[j] = null;
-        prevHandDepth[j] = 0;
-      }
+  for (int h = 0; h < MAX_HANDS; h++) {
+    int pointIndex = h * HAND_POINTS_PER_HAND + 1;
+    if (pointIndex >= prevHandPoints.length) continue;
+    if (!presentSlots[h]) {
+      prevHandPoints[pointIndex] = null;
+      prevHandDepth[pointIndex] = 0;
+      handSizes[h] = 0;
     }
-
-    // Update proximity state with hysteresis to avoid flicker
-    handProximity = proximityBest;
-    handProximitySmoothed = lerp(handProximitySmoothed, handProximity, HAND_PROX_ALPHA);
-    if (!handNear && handProximitySmoothed >= HAND_NEAR_THR) {
-      handNear = true;
-    } else if (handNear && handProximitySmoothed <= HAND_FAR_THR) {
-      handNear = false;
+  }
+  for (int j = 0; j < prevHandPoints.length; j++) {
+    if (!used[j]) {
+      prevHandPoints[j] = null;
+      prevHandDepth[j] = 0;
     }
+  }
 
-    boolean wasEngaged = handEngaged;
-    float depthDelta = (primaryHasDepth && primaryHadPrevDepth) ? abs(primaryDepth - primaryPrevDepth) : 0;
-    boolean stableDepth = (!primaryHasDepth || (primaryHasDepth && depthDelta < HAND_DEPTH_STILL_THR));
-    boolean launchMove = wasEngaged && primarySet && primarySpeed >= HAND_RELEASE_WAKE_SPEED;
-    boolean harshPressMove = handEngaged && primarySet && primarySpeed >= HAND_FEAR_SPEED && !stableDepth;
-    int engagedHand = handEngaged ? primaryHand : -1;
+  handPresent = anyPresent;
+  if (anyPresent) {
+    lastHandTime = nowMs;
+  }
 
-    // Engagement: still + near counts as a press
-    if (handNear && primarySet && primarySpeed < HAND_STILL_SPEED && stableDepth) {
-      handStillMs += dtMs;
+  handProximity = proximityBest;
+  handProximitySmoothed = lerp(handProximitySmoothed, handProximity, HAND_PROX_ALPHA);
+  if (!handNear && handProximitySmoothed >= HAND_NEAR_THR) {
+    handNear = true;
+  } else if (handNear && handProximitySmoothed <= HAND_FAR_THR) {
+    handNear = false;
+  }
+
+  boolean wasEngaged = handEngaged;
+  float depthDelta = (primaryHasDepth && primaryHadPrevDepth) ? abs(primaryDepth - primaryPrevDepth) : 0;
+  boolean stableDepth = (!primaryHasDepth || (primaryHasDepth && depthDelta < HAND_DEPTH_STILL_THR));
+  boolean launchMove = wasEngaged && primarySet && primarySpeed >= HAND_RELEASE_WAKE_SPEED;
+  boolean harshPressMove = handEngaged && primarySet && primarySpeed >= HAND_FEAR_SPEED && !stableDepth;
+  int engagedHand = handEngaged ? primaryHand : -1;
+
+  if (handNear && primarySet && primarySpeed < HAND_STILL_SPEED && stableDepth) {
+    handStillMs += dtMs;
+  } else {
+    handStillMs = 0;
+  }
+  if (!handEngaged && handStillMs >= HAND_STILL_DWELL_MS) {
+    handEngaged = true;
+    pendingTapHand = primaryHand;
+    pendingTapStartMs = nowMs;
+  }
+  if (handEngaged && (!handNear || !primarySet || primarySpeed > HAND_STILL_SPEED * 1.8)) {
+    handEngaged = false;
+    handStillMs = 0;
+  }
+  if (handEngaged && primaryHasDepth) {
+    if (depthDelta < HAND_DEPTH_STILL_THR) {
+      handStillMs = min(handStillMs + dtMs, 10000);
     } else {
-      handStillMs = 0;
+      handStillMs = max(0, handStillMs - dtMs);
     }
-    if (!handEngaged && handStillMs >= HAND_STILL_DWELL_MS) {
-      handEngaged = true;
-      pendingTapHand = primaryHand;
-      pendingTapStartMs = nowMs;
+  }
+  if (handEngaged && primarySet) {
+    boolean depthGentle = (!primaryHasDepth) || (depthDelta < HAND_DEPTH_STILL_THR);
+    int hIdx = min(primaryHand, handFriendlyStableMs.length - 1);
+    if (depthGentle) {
+      handFriendlyStableMs[hIdx] = min(handFriendlyStableMs[hIdx] + dtMs, 10000);
+    } else {
+      handFriendlyStableMs[hIdx] = max(0, handFriendlyStableMs[hIdx] - dtMs);
     }
-    if (handEngaged && (!handNear || !primarySet || primarySpeed > HAND_STILL_SPEED * 1.8)) {
-      handEngaged = false;
-      handStillMs = 0;
+    float dCentroid = dist(primaryX, primaryY, swarmCentroidX, swarmCentroidY);
+    if (handFriendlyStableMs[hIdx] >= FRIEND_DEPTH_STABLE_MS &&
+        primarySpeed < FRIEND_SPEED_THR &&
+        dCentroid <= FRIEND_RADIUS) {
+      handFriendlyMs[hIdx] += dtMs;
     }
-    // Depth stability accumulation
-    if (handEngaged && primaryHasDepth) {
-      if (depthDelta < HAND_DEPTH_STILL_THR) {
-        handStillMs = min(handStillMs + dtMs, 10000); // reuse counter
-      } else {
-        handStillMs = max(0, handStillMs - dtMs);
-      }
+  }
+  if (pendingTapHand >= 0 && handEngaged && primarySet) {
+    boolean speedRelease = primarySpeed > HAND_RELEASE_WAKE_SPEED * 0.35 && (nowMs - pendingTapStartMs) <= 150;
+    boolean depthStable = (!primaryHasDepth) || (handStillMs >= TAP_DEPTH_STABLE_MS);
+    boolean travelEnough = true;
+    if (lastTapMs > 0) {
+      float d = dist(primaryX, primaryY, lastTapX, lastTapY);
+      travelEnough = (d >= MIN_TAP_DIST) || (nowMs - lastTapMs >= MIN_TAP_GAP_MS);
     }
-    // Gentle presence accumulation
-    if (handEngaged && primarySet) {
-      boolean depthGentle = (!primaryHasDepth) || (depthDelta < HAND_DEPTH_STILL_THR);
-      if (depthGentle) {
-        handFriendlyStableMs[primaryHand] = min(handFriendlyStableMs[primaryHand] + dtMs, 10000);
-      } else {
-        handFriendlyStableMs[primaryHand] = max(0, handFriendlyStableMs[primaryHand] - dtMs);
-      }
-      float dCentroid = dist(primaryX, primaryY, swarmCentroidX, swarmCentroidY);
-      if (handFriendlyStableMs[primaryHand] >= FRIEND_DEPTH_STABLE_MS &&
-          primarySpeed < FRIEND_SPEED_THR &&
-          dCentroid <= FRIEND_RADIUS) {
-        handFriendlyMs[primaryHand] += dtMs;
-      }
+    if (speedRelease && depthStable && travelEnough) {
+      registerUserTap(primarySpeed);
+      int hIdx = min(pendingTapHand, handTapCount.length - 1);
+      handTapCount[hIdx]++;
+      handTapLastMs[hIdx] = nowMs;
+      lastTapX = primaryX;
+      lastTapY = primaryY;
+      lastTapMs = nowMs;
+      pendingTapHand = -1;
     }
-    // Debounced tap: require engagement edge, small release spike, and depth stability
-    if (pendingTapHand >= 0 && handEngaged && primarySet) {
-      boolean speedRelease = primarySpeed > HAND_RELEASE_WAKE_SPEED * 0.35 && (nowMs - pendingTapStartMs) <= 150;
-      boolean depthStable = (!primaryHasDepth) || (handStillMs >= TAP_DEPTH_STABLE_MS);
-      boolean travelEnough = true;
-      if (lastTapMs > 0) {
-        float d = dist(primaryX, primaryY, lastTapX, lastTapY);
-        travelEnough = (d >= MIN_TAP_DIST) || (nowMs - lastTapMs >= MIN_TAP_GAP_MS);
-      }
-      if (speedRelease && depthStable && travelEnough) {
-        registerUserTap(primarySpeed);
-        handTapCount[min(pendingTapHand, handTapCount.length-1)]++;
-        handTapLastMs[min(pendingTapHand, handTapLastMs.length-1)] = nowMs;
-        lastTapX = primaryX;
-        lastTapY = primaryY;
-        lastTapMs = nowMs;
-        pendingTapHand = -1;
-      }
-    }
+  }
 
-    // Deposit a softer blob when engaged (press)
-    if (handEngaged && primarySet) {
-      float pressRadius = map(handProximitySmoothed, 0, 1, 35, 70);
-      depositWakeBlob(primaryX, primaryY, pressRadius, userDeposit * 1.1);
-    }
+  if (handEngaged && primarySet) {
+    float pressRadius = map(handProximitySmoothed, 0, 1, 35, 70);
+    depositWakeBlob(primaryX, primaryY, pressRadius, userDeposit * 1.1);
+  }
 
-    // While engaged and depth is steady, treat motion like mouse drag (ink without fear)
-    if (handEngaged && primarySet && primaryHadPrev && stableDepth && primarySpeed > 2.0) {
-      int steps = max(2, int(map(primarySpeed, 2, 40, 2, 10)));
-      for (int i = 0; i < steps; i++) {
-        float t = (float)i / (float)(steps - 1);
-        float px = lerp(primaryPrevX, primaryX, t);
-        float py = lerp(primaryPrevY, primaryY, t);
-        float radius = lerp(40, 65, t);
-        depositWakeBlob(px, py, radius, userDeposit);
-      }
+  if (handEngaged && primarySet && primaryHadPrev && stableDepth && primarySpeed > 2.0) {
+    int steps = max(2, int(map(primarySpeed, 2, 40, 2, 10)));
+    for (int i = 0; i < steps; i++) {
+      float t = (float)i / (float)(steps - 1);
+      float px = lerp(primaryPrevX, primaryX, t);
+      float py = lerp(primaryPrevY, primaryY, t);
+      float radius = lerp(40, 65, t);
+      depositWakeBlob(px, py, radius, userDeposit);
     }
+  }
 
-    // On launch from a press, lay down an initial trail burst
-    if (launchMove && primarySet && primaryHadPrev) {
-      for (int i = 0; i < HAND_RELEASE_WAKE_STEPS; i++) {
-        float t = (float)i / (float)(HAND_RELEASE_WAKE_STEPS - 1);
-        float px = lerp(primaryPrevX, primaryX, t);
-        float py = lerp(primaryPrevY, primaryY, t);
-        float radius = lerp(45, 70, t);
-        depositWakeBlob(px, py, radius, userDeposit * HAND_RELEASE_WAKE_MULT);
-      }
+  if (launchMove && primarySet && primaryHadPrev) {
+    for (int i = 0; i < HAND_RELEASE_WAKE_STEPS; i++) {
+      float t = (float)i / (float)(HAND_RELEASE_WAKE_STEPS - 1);
+      float px = lerp(primaryPrevX, primaryX, t);
+      float py = lerp(primaryPrevY, primaryY, t);
+      float radius = lerp(45, 70, t);
+      depositWakeBlob(px, py, radius, userDeposit * HAND_RELEASE_WAKE_MULT);
     }
+  }
 
-    // Harsh motion while pressing: trigger fear + avoidance
-    if (harshPressMove && (nowMs - handFearLastMs) > HAND_FEAR_COOLDOWN_MS) {
-      handFearLastMs = nowMs;
-      markUserFearEvent();
-      // Fear field splash so nearby jellies read the threat
-      splatMoodField(primaryX, primaryY, MOOD_FIELD_SPLAT * HAND_FEAR_FIELD_SCALE, 0);
-      // Directly scare jellies within radius
-      if (gusanos != null) {
-        for (Gusano g : gusanos) {
-          Segmento head = g.segmentos.get(0);
-          if (head == null) continue;
-          if (dist(head.x, head.y, primaryX, primaryY) <= HAND_FEAR_RADIUS) {
-            if (g.state != Gusano.FEAR && g.fearCooldownFrames <= 0) {
-              g.lastFearReason = "HAND_PRESS_HARSH";
-              g.mood.setState(Gusano.FEAR, random(1.4, 2.4));
-            }
+  if (harshPressMove && (nowMs - handFearLastMs) > HAND_FEAR_COOLDOWN_MS && primarySet) {
+    handFearLastMs = nowMs;
+    markUserFearEvent();
+    splatMoodField(primaryX, primaryY, MOOD_FIELD_SPLAT * HAND_FEAR_FIELD_SCALE, 0);
+    if (gusanos != null) {
+      for (Gusano g : gusanos) {
+        Segmento head = g.segmentos.get(0);
+        if (head == null) continue;
+        if (dist(head.x, head.y, primaryX, primaryY) <= HAND_FEAR_RADIUS) {
+          if (g.state != Gusano.FEAR && g.fearCooldownFrames <= 0) {
+            g.lastFearReason = "HAND_PRESS_HARSH";
+            g.mood.setState(Gusano.FEAR, random(1.4, 2.4));
           }
         }
       }
     }
-    // On disengage, convert friendly time to affinity
-    if (wasEngaged && !handEngaged) {
-      int h = (engagedHand >= 0) ? engagedHand : 0;
-      float delta = (handFriendlyMs[h] / 1000.0) * FRIEND_AFFINITY_RATE;
-      if (delta != 0) applyUserAffinityDelta(delta);
-      handFriendlyMs[h] = 0;
-      handFriendlyStableMs[h] = 0;
+  }
+  if (wasEngaged && !handEngaged) {
+    int hIdx = (engagedHand >= 0) ? min(engagedHand, handFriendlyMs.length - 1) : 0;
+    float delta = (handFriendlyMs[hIdx] / 1000.0) * FRIEND_AFFINITY_RATE;
+    if (delta != 0) applyUserAffinityDelta(delta);
+    handFriendlyMs[hIdx] = 0;
+    handFriendlyStableMs[hIdx] = 0;
+  }
+}
+
+void oscEvent(OscMessage msg) {
+  boolean handled = false;
+
+  if (msg.checkAddrPattern("/hand_size")) {
+    Object[] args = msg.arguments();
+    if (args != null) {
+      int n = min(MAX_HANDS, args.length);
+      for (int i = 0; i < n; i++) {
+        handSizes[i] = msg.get(i).floatValue();
+      }
+    }
+  } else if (msg.checkAddrPattern("/hands")) {
+    Object[] args = msg.arguments();
+    if (args != null && args.length >= 4) {
+      int slotCount = min(MAX_HANDS, args.length / 4);
+      int[] slots = new int[slotCount];
+      float[] xs = new float[slotCount];
+      float[] ys = new float[slotCount];
+      float[] zs = new float[slotCount];
+      boolean[] presentSlots = new boolean[MAX_HANDS];
+      int sampleCount = 0;
+      for (int i = 0; i < slotCount; i++) {
+        float present = msg.get(i * 4).floatValue();
+        presentSlots[i] = present >= 0.5;
+        if (presentSlots[i]) {
+          slots[sampleCount] = i;
+          xs[sampleCount] = msg.get(i * 4 + 1).floatValue();
+          ys[sampleCount] = msg.get(i * 4 + 2).floatValue();
+          zs[sampleCount] = msg.get(i * 4 + 3).floatValue();
+          sampleCount++;
+        }
+      }
+      processHandSamples(slots, xs, ys, zs, presentSlots, sampleCount, true);
+      handled = true;
+    }
+  } else if (msg.checkAddrPattern("/hand")) {
+    Object[] args = msg.arguments();
+    if (args != null && args.length >= 2) {
+      boolean tripletMode = (args.length % 3 == 0);
+      int totalGroups = tripletMode ? args.length / 3 : args.length / 2;
+      int groupsPerHand = (totalGroups % 6 == 0) ? 6 : 1;
+      int numHands = min(MAX_HANDS, totalGroups / groupsPerHand);
+      int[] slots = new int[numHands];
+      float[] xs = new float[numHands];
+      float[] ys = new float[numHands];
+      float[] zs = new float[numHands];
+      boolean[] presentSlots = new boolean[MAX_HANDS];
+      int sampleCount = 0;
+
+      for (int h = 0; h < numHands; h++) {
+        int argIdx;
+        if (groupsPerHand == 6) {
+          argIdx = (h * groupsPerHand + 1) * (tripletMode ? 3 : 2);
+        } else {
+          argIdx = h * (tripletMode ? 3 : 2);
+        }
+        if (argIdx + (tripletMode ? 2 : 1) >= args.length) break;
+        slots[sampleCount] = h;
+        xs[sampleCount] = msg.get(argIdx).floatValue();
+        ys[sampleCount] = msg.get(argIdx + 1).floatValue();
+        zs[sampleCount] = tripletMode ? msg.get(argIdx + 2).floatValue() : 0.0;
+        presentSlots[h] = true;
+        sampleCount++;
+      }
+      processHandSamples(slots, xs, ys, zs, presentSlots, sampleCount, tripletMode);
+      handled = true;
     }
   }
-  tapDecayPerSec = handPresent ? TAP_DECAY_PER_SEC_ACTIVE : TAP_DECAY_PER_SEC_IDLE;
-  maybeTriggerTapMood();
+
+  if (handled) {
+    tapDecayPerSec = handPresent ? TAP_DECAY_PER_SEC_ACTIVE : TAP_DECAY_PER_SEC_IDLE;
+    maybeTriggerTapMood();
+  }
 }
