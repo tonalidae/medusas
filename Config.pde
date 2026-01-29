@@ -66,7 +66,7 @@ float HAND_RELEASE_WAKE_SPEED = 7.0;   // speed that counts as a "launch" from p
 float HAND_RELEASE_WAKE_MULT = 1.6;    // strength multiplier for launch trail
 int HAND_RELEASE_WAKE_STEPS = 8;       // number of blobs along the first movement segment
 int handFearLastMs = 0;                // last time we forced fear from harsh press motion
-float HAND_FEAR_SPEED = 15;          // px/frame speed that counts as harsh press motion
+float HAND_FEAR_SPEED = 3;          // px/frame speed that counts as harsh press motion
 float HAND_FEAR_RADIUS = 220;          // radius in px to scare nearby jellies
 float HAND_FEAR_FIELD_SCALE = 1.4;     // extra fear deposited into mood field
 int HAND_FEAR_COOLDOWN_MS = 450;       // min gap between forced fear events
@@ -82,13 +82,13 @@ float t = 0;
 boolean debugSteering = false;
 boolean debugWake = false;
 boolean debugFlow = false;
-boolean debugObjetivos = true;
+boolean debugObjetivos = false;
 boolean debugStateChanges = false;
 boolean debugFlowMean = false;
 boolean debugNeighborStats = false;
 boolean debugMoodStats = false;
 boolean debugSteeringNeighbors = false;
-boolean debugHelp = true;
+boolean debugHelp = false;
 boolean showHead = false;
 boolean debugJellyMotion = false;
 boolean debugJumps = false;
@@ -160,7 +160,7 @@ float SEG_SNAP_THR = 80;
 
 // --- Mood stabilization toggles (A/B) ---
 boolean STABILIZE_MOOD = true;
-boolean DEBUG_MOOD = true;
+boolean DEBUG_MOOD = false;
 
 // --- Curious stickiness toward user ---
 float CURIOUS_STICK_MS = 6000;   // how long a curious jelly keeps memory of the user
