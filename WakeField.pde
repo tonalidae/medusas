@@ -4,13 +4,14 @@ float[][] wake;
 float[][] wakeNext;
 
 // Core wake parameters
-float wakeDecay = 0.985;
+float wakeDecay = 0.992;         // Slower fade -> thicker, longer-lived ripples
 float wakeDiffuse = 0.20;
 float wakeDeposit = 1.0;
 float userDeposit = 2.0;
-float wakeClamp = 8.0;          // Cap wake intensity to avoid runaway blobs (<=0 disables)
+float wakeClamp = 12.0;          // Higher cap so dense wakes can accumulate before clipping
 float wakeTension = 0.06;       // Surface-tension style curvature feedback (0 = off)
 float wakeCurlStrength = 0.12;  // Small rotational kick to keep ripples swirling
+float wakeBlobRadiusScale = 1.25; // Enlarge deposits to feel more viscous
 
 // Flow shaping
 float swirlStrength = 0.6;
@@ -19,7 +20,7 @@ float maxFlow = 1.2;
 
 // Advection + ambient current
 boolean useWakeAdvection = true;
-float wakeAdvectStrength = 1.0; // Cells per frame scale; higher = faster transport
+float wakeAdvectStrength = 0.65; // Lower transport so blobs linger and smear slowly
 int wakeAdvectSteps = 1;        // 1 = cheap, 2 = smoother midpoint
 boolean useAmbientCurrent = true;
 float ambientCurrentStrength = 0.18; // Small bias current magnitude (grid units/frame)
@@ -35,7 +36,7 @@ int lastFlowMeanSample = 0;
 PVector userTouchPos = new PVector(-1000, -1000);
 PVector userFlowVec = new PVector(0, 0);
 float userTouchStrength = 0;
-float USER_TOUCH_DECAY = 0.90;
+float USER_TOUCH_DECAY = 0.97;   // Slower decay so interaction trails last longer
 float USER_FLOW_SMOOTH = 0.18;
 
 void initWakeGrid() {
@@ -61,6 +62,7 @@ void depositWakePoint(float x, float y, float amount) {
 
 void depositWakeBlob(float x, float y, float radius, float amount) {
   recordUserImpact(x, y, amount);
+  radius *= wakeBlobRadiusScale; // globally enlarge deposits for a heavier fluid feel
   int gx = gridX(x);
   int gy = gridY(y);
   float cellW = width / (float)gridW;

@@ -54,6 +54,10 @@ class GusanoSteering {
     // Calculate phase gate early so all steering forces can use it.
     float contractCurve = g.pulseContractCurve(g.pulsePhase);
     float steerPhaseGate = lerp(0.2, 1.0, contractCurve); // Minimal steering during coast
+    // Extra drag in heavy water: timid states hesitate more
+    if (g.state == Gusano.FEAR || g.state == Gusano.SHY) {
+      steerPhaseGate *= 0.65; // damp steering strength so turns feel sluggish
+    }
     
     // Weights based on Mood
     float wanderW = (g.state == Gusano.CALM) ? 2.4 : 1.2;
@@ -242,6 +246,9 @@ class GusanoSteering {
     // Replaces hard-coded "vel.x += 0.2" with smooth arcing avoidance
     // Wall avoidance gets partial phase bypass (survival)
     float wallPhaseGate = lerp(0.5, 1.0, contractCurve);
+    if (g.state == Gusano.FEAR || g.state == Gusano.SHY) {
+      wallPhaseGate *= 0.7; // more hesitation near walls when scared/shy
+    }
     PVector wallForce = new PVector(0, 0);
     if (cabeza.x < wallMarginX) wallForce.x += sq(1.0 - cabeza.x / wallMarginX);
     if (cabeza.x > width - wallMarginX) wallForce.x -= sq(1.0 - (width - cabeza.x) / wallMarginX);
