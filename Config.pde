@@ -28,6 +28,10 @@ OscP5 oscP5;
 // --- User interaction feedback (non-visual) ---
 boolean useUserFlowFeedback = true;   // keep flow pushback logic active without showing a cursor
 float fearIntensity = 0;             // smoothed global fear ratio (0..1)
+float userFearIntensity = 0;         // smoothed intensity for user-triggered fear
+int userFearLastMs = -9999;          // last time user caused fear
+float USER_FEAR_BOOST = 0.65;        // how much to add on each user fear event (0..1)
+float USER_FEAR_DECAY = 0.94;        // per-frame decay for user fear overlay
 
 float remoteX = -1000;
 float remoteY = -1000;
@@ -169,6 +173,7 @@ float FEAR_WARN_FLOOR = 0.05;   // ignore tiny fear levels
 float FEAR_INTENSITY_LERP = 0.12;
 float FEAR_SHAKE_MIN = 0.0;
 float FEAR_SHAKE_MAX = 10.0;    // max shake in pixels
+float USER_FEAR_TINT_MAX = 170; // max red alpha when user caused the fear
 
 // --- Buddy / micro-cohesion ---
 float BUDDY_SOCIAL_THR = 0.55;

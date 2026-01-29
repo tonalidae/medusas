@@ -247,7 +247,8 @@ class Gusano {
     postFearTimer = 0;
     prevSpeed = 0;
 
-    colorLerpSpeed = 0.05;
+    // Softer color transitions for visible gradients
+    colorLerpSpeed = 0.02;
     mood = new GusanoMood(this);
     steering = new GusanoSteering(this);
     render = new GusanoRender(this);
@@ -318,6 +319,7 @@ class Gusano {
               stateCooldown = random(3.0, 6.0);
               fearCooldownFrames = int(random(180, 360));
               mood.setState(AGGRESSIVE, random(2.2, 3.6));
+              markUserFearEvent();
             }
           } else if (state != FEAR) {
             // Any other archetype should immediately go into FEAR on a hard hit.
@@ -326,6 +328,7 @@ class Gusano {
             stateCooldown = random(3.0, 6.0);
             fearCooldownFrames = int(random(180, 360));
             mood.setState(FEAR, random(1.4, 2.4));
+            markUserFearEvent();
           }
         }
       }

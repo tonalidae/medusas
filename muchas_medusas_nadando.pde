@@ -171,16 +171,25 @@ void draw() {
   // Update global fear intensity (used next frame for shake/tint)
   float fearRaw = (gusanos != null && gusanos.size() > 0) ? (fearCount / (float)gusanos.size()) : 0;
   fearIntensity = lerp(fearIntensity, fearRaw, FEAR_INTENSITY_LERP);
+  // Decay user-driven fear highlight
+  userFearIntensity = lerp(userFearIntensity, 0, 1 - USER_FEAR_DECAY);
 
   popMatrix();
 
   // Soft red tint warning layer (outside shake so edges stay on-screen)
-  if (fearIntensity > FEAR_WARN_FLOOR) {
-    float a = lerp(FEAR_TINT_MIN, FEAR_TINT_MAX, fearIntensity);
+  float tintLevel = userFearIntensity; // only user-triggered fear shows the tint
+  if (tintLevel > FEAR_WARN_FLOOR) {
+    float a = lerp(FEAR_TINT_MIN, USER_FEAR_TINT_MAX, tintLevel);
     noStroke();
     fill(255, 40, 40, a);
     rect(0, 0, width, height);
   }
+}
+
+// Marks that the user directly caused fear; drives the warning overlay.
+void markUserFearEvent() {
+  userFearIntensity = min(1.0, userFearIntensity + USER_FEAR_BOOST);
+  userFearLastMs = millis();
 }
 
 // Controles para ajustar parametros
