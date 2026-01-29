@@ -36,6 +36,11 @@ void draw() {
   background(#050008);
   t = millis() * timeScale;
 
+  // Screen shake scales with smoothed global fear
+  float shakeAmp = lerp(FEAR_SHAKE_MIN, FEAR_SHAKE_MAX, fearIntensity);
+  pushMatrix();
+  translate(random(-shakeAmp, shakeAmp), random(-shakeAmp, shakeAmp));
+
   // Draw water overlay (either frames or procedural half-res buffer)
   if (showWaterTex) {
     // Enhanced blend mode for better depth and luminosity
@@ -118,9 +123,11 @@ void draw() {
     drawWakeGrid();
   }
 
+  int fearCount = 0;
   for (Gusano gusano : gusanos) {
     gusano.actualizar();
     gusano.dibujarForma();
+    if (gusano.state == Gusano.FEAR) fearCount++;
   }
 
   if (debugSteering) {
@@ -150,6 +157,20 @@ void draw() {
   
   if (debugBiologicalVectors) {
     drawBiologicalVectorDebug();
+  }
+
+  // Update global fear intensity (used next frame for shake/tint)
+  float fearRaw = (gusanos != null && gusanos.size() > 0) ? (fearCount / (float)gusanos.size()) : 0;
+  fearIntensity = lerp(fearIntensity, fearRaw, FEAR_INTENSITY_LERP);
+
+  popMatrix();
+
+  // Soft red tint warning layer (outside shake so edges stay on-screen)
+  if (fearIntensity > FEAR_WARN_FLOOR) {
+    float a = lerp(FEAR_TINT_MIN, FEAR_TINT_MAX, fearIntensity);
+    noStroke();
+    fill(255, 40, 40, a);
+    rect(0, 0, width, height);
   }
 }
 

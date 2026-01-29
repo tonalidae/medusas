@@ -27,6 +27,7 @@ OscP5 oscP5;
 
 // --- User interaction feedback (non-visual) ---
 boolean useUserFlowFeedback = true;   // keep flow pushback logic active without showing a cursor
+float fearIntensity = 0;             // smoothed global fear ratio (0..1)
 
 float remoteX = -1000;
 float remoteY = -1000;
@@ -149,6 +150,14 @@ float ENERGY_MAXSPEED_SCALE = 0.3;   // fraction of maxSpeed lost when fully tir
 float FIELD_FEAR_STARTLE_THRESHOLD = 0.6; // field value required to trigger fear
 float FIELD_FEAR_THREAT_MIN = 0.25;       // threat signal minimum to accept the field startle
 int FIELD_FEAR_HOLD_FRAMES = 6;           // consecutive frames of high field fear before startle
+
+// --- Global fear feedback (screen warning) ---
+float FEAR_TINT_MIN = 0;
+float FEAR_TINT_MAX = 140;      // max red overlay alpha
+float FEAR_WARN_FLOOR = 0.05;   // ignore tiny fear levels
+float FEAR_INTENSITY_LERP = 0.12;
+float FEAR_SHAKE_MIN = 0.0;
+float FEAR_SHAKE_MAX = 10.0;    // max shake in pixels
 
 // --- Buddy / micro-cohesion ---
 float BUDDY_SOCIAL_THR = 0.55;
