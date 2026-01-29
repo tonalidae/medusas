@@ -49,6 +49,7 @@ class Gusano {
   float stateDuration;
   float stateCooldown;
   float moodBlend;
+  float moodHeat = 1.0;
   float turnRate;
   float followMoodScale;
   float turbulenceMoodScale;
@@ -153,7 +154,7 @@ class Gusano {
     // Personality archetype (stable baseline)
     float pr = random(1);
     if (pr < 0.5) {
-      personalityLabel = "DOM";
+      personalityLabel = "AGG";
     } else {
       personalityLabel = "SHY";
     }
@@ -171,12 +172,12 @@ class Gusano {
         basePulseStrength = random(0.7, 1.2);
         baseDrag = random(0.90, 0.93);
         break;
-      case "DOM":
+      case "AGG":
       default:
         social = random(0.1, 0.4);
         timidity = random(0.0, 0.2);
         aggression = random(0.7, 1.0);
-        // Increase DOM curiosity so these jellyfish seek the user more
+        // Increase AGG curiosity so these jellyfish seek the user more
         curiosity = random(0.45, 0.85);
         // Faster, stronger cycles
         basePulseRate = random(0.22, 0.50);
@@ -210,7 +211,7 @@ class Gusano {
     mood = new GusanoMood(this);
     steering = new GusanoSteering(this);
     render = new GusanoRender(this);
-    targetColor = mood.paletteForState(state);
+    targetColor = mood.paletteForState(state, moodHeat);
     currentColor = targetColor;
     cycleStartX = x;
     cycleStartY = y;
@@ -634,7 +635,7 @@ class Gusano {
 
   int baseMoodForLabel(String label) {
     if ("SHY".equals(label)) return SHY;
-    if ("DOM".equals(label)) return AGGRESSIVE;
+    if ("AGG".equals(label)) return AGGRESSIVE;
     return CALM;
   }
 

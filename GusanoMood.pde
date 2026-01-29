@@ -187,12 +187,6 @@ class GusanoMood {
     String blockReason = "";
     int cooldownLeft = 0;
 
-    // Personality lock: only allow the base mood for this jellyfish.
-    if (proposed != g.baseMood) {
-      allowed = false;
-      blockReason = "persona_lock";
-    }
-
     if (STABILIZE_MOOD && !force) {
       int since = frameCount - g.lastMoodChangeFrame;
       if (since < MOOD_COOLDOWN_FRAMES) {
@@ -236,14 +230,13 @@ class GusanoMood {
 
       // Soft personality gate: discourage contradictory moods unless strong trigger
       if (allowed) {
-        String persona = g.personalityLabel;
         float gateThreat = max(threatRaw, g.smoothedThreat);
-        if ("SHY".equals(persona) && proposed == Gusano.AGGRESSIVE) {
+        if (g.baseMood == Gusano.SHY && proposed == Gusano.AGGRESSIVE) {
           if (gateThreat < 0.8) {
             allowed = false;
             blockReason = "persona_gate_shy";
           }
-        } else if ("AGG".equals(persona) && proposed == Gusano.SHY) {
+        } else if (g.baseMood == Gusano.AGGRESSIVE && proposed == Gusano.SHY) {
           if (gateThreat > 0.2) {
             allowed = false;
             blockReason = "persona_gate_agg";
@@ -330,6 +323,8 @@ class GusanoMood {
         moodStrength = lerp(0.8, 1.4, g.timidity);
         break;
     }
+    // Expose to renderer so color can reflect intensity
+    g.moodHeat = moodStrength;
 
     float targetPulseRate = g.basePulseRate;
     float targetPulseStrength = g.basePulseStrength;
@@ -426,26 +421,41 @@ class GusanoMood {
   }
 
   void updateColor() {
-    g.targetColor = paletteForState(g.state);
+    g.targetColor = paletteForState(g.state, g.moodHeat);
     g.currentColor = lerpColor(g.currentColor, g.targetColor, g.colorLerpSpeed);
   }
 
-  color paletteForState(int s) {
-    float a = 66;
+  color paletteForState(int s, float intensity) {
+    // Base mood hues (RGB) chosen for quick readability
+    color base;
     switch(s) {
       case Gusano.CALM:
-        return color(90, 170, 210, a); // soft cyan/blue
+        base = color(70, 150, 205);   // aqua blue
+        break;
       case Gusano.CURIOUS:
-        return color(70, 190, 150, a); // green/teal
+        base = color(80, 210, 150);   // jade green
+        break;
       case Gusano.SHY:
-        return color(170, 150, 200, a); // pale lavender
+        base = color(185, 160, 220);  // lilac
+        break;
       case Gusano.FEAR:
-        return color(220, 170, 70, a); // yellow/orange
+        base = color(245, 185, 80);   // amber
+        break;
       case Gusano.AGGRESSIVE:
-        return color(210, 70, 140, a); // red/magenta
+        base = color(230, 60, 135);   // hot magenta
+        break;
       default:
-        return color(0, 66);
+        base = color(120);
+        break;
     }
+    // Intensity drives brightness/saturation bump
+    float boost = constrain(intensity, 0.6, 1.5);
+    float r = constrain(red(base) * boost, 0, 255);
+    float gC = constrain(green(base) * boost, 0, 255);
+    float b = constrain(blue(base) * boost, 0, 255);
+    // Alpha subtly scales with intensity for glow variation
+    float a = constrain(60 * boost, 40, 110);
+    return color(r, gC, b, a);
   }
 
   String stateLabel() {

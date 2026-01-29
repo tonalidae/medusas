@@ -235,6 +235,7 @@ void updateWakeGrid() {
   }
   // 3) Surface-tension feedback: shallow curvature pull that keeps ripples tight
   if (wakeTension > 0.0) {
+    // Write tension-corrected result into wake (reuse old buffer as output)
     for (int x = 0; x < gridW; x++) {
       for (int y = 0; y < gridH; y++) {
         float c = wakeNext[x][y];
@@ -248,10 +249,9 @@ void updateWakeGrid() {
         wake[x][y] = v;
       }
     }
-    float[][] tmp = wakeNext;
-    wakeNext = wake;
-    wake = tmp;
+    // Keep wakeNext as scratch (diffused data is no longer needed)
   } else {
+    // No tension pass: promote diffused data to wake
     float[][] tmp = wake;
     wake = wakeNext;
     wakeNext = tmp;
@@ -319,23 +319,34 @@ void drawWaterInteraction() {
   float cellW = width / (float)gridW;
   float cellH = height / (float)gridH;
 
-  // --- Ink/Dye wash (dominant mass layer) ---
+  // --- Layer 1: Depth-mapped fluid base with iridescence ---
   noStroke();
   for (int x = 0; x < gridW; x++) {
     for (int y = 0; y < gridH; y++) {
       float v = wake[x][y];
       if (v <= 0.01) continue;
+      
       float dx = wake[min(gridW - 1, x + 1)][y] - wake[max(0, x - 1)][y];
       float dy = wake[x][min(gridH - 1, y + 1)] - wake[x][max(0, y - 1)];
       float edge = constrain(sqrt(dx * dx + dy * dy) * 0.5, 0, 1);
-      float a = constrain(v * WATER_INK_ALPHA_SCALE * (0.6 + edge * 0.8), 0, 90);
-      fill(40, 90, 140, a);
+      
+      // Depth-based color gradient: deeper areas get richer blues
+      float depth = constrain(v * 0.8, 0, 1);
+      float iridescence = noise(x * 0.3, y * 0.3, t * 0.15) * 0.3;
+      
+      // Multi-tone blue-cyan-teal gradient
+      float r = lerp(20, 60, depth) + iridescence * 30;
+      float g = lerp(60, 140, depth * (1 + edge * 0.5)) + iridescence * 40;
+      float b = lerp(120, 200, depth + edge * 0.3) + iridescence * 20;
+      
+      float a = constrain(v * WATER_INK_ALPHA_SCALE * (0.7 + edge * 1.2), 0, 120);
+      fill(r, g, b, a);
       rect(x * cellW, y * cellH, cellW + 1, cellH + 1);
     }
   }
 
-  // --- Flow-aligned strokes (direction layer) ---
-  if (debugFlow) {
+  // --- Layer 2: Flow-aligned strokes with organic trails ---
+  if (showFlowTrails) {
     int cols = 48;
     int rows = 30;
     float stepW = width / (float)cols;
@@ -350,20 +361,33 @@ void drawWaterInteraction() {
         float m2 = flowScratch.magSq();
         if (m2 < 0.0001) continue;
         flowScratch.normalize();
-        float len = lerp(3, 12, constrain(w * 0.6, 0, 1));
+        
+        // Variable stroke length based on flow intensity
+        float flowMag = sqrt(m2);
+        float len = lerp(4, 18, constrain(w * 0.7 + flowMag * 0.3, 0, 1));
         float edge = sampleWakeGradient(x, y).mag();
-        float a = constrain(w * WATER_STROKE_ALPHA_SCALE * 10.0 * (0.5 + edge), 0, 80);
-        stroke(60, 130, 190, a);
-        strokeWeight(1);
-        line(x - flowScratch.x * len * 0.5, y - flowScratch.y * len * 0.5,
-             x + flowScratch.x * len * 0.5, y + flowScratch.y * len * 0.5);
+        
+        // Elongated, organic strokes with varying thickness
+        float thickness = lerp(0.5, 2.5, constrain(w * 0.5, 0, 1));
+        float a = constrain(w * WATER_STROKE_ALPHA_SCALE * 12.0 * (0.6 + edge * 0.8), 0, 100);
+        
+        // Color varies with direction and intensity
+        float hueShift = noise(x * 0.02, y * 0.02, t * 0.1) * 60;
+        stroke(50 + hueShift, 140 + hueShift * 0.5, 210, a);
+        strokeWeight(thickness);
+        
+        // Draw elongated stroke with slight curve
+        float curvature = (noise(x * 0.03, y * 0.03, t * 0.2) - 0.5) * 0.3;
+        line(x - flowScratch.x * len * 0.6, y - flowScratch.y * len * 0.6,
+             x + flowScratch.x * len * 0.6 + flowScratch.y * curvature * 2, 
+             y + flowScratch.y * len * 0.6 - flowScratch.x * curvature * 2);
       }
     }
   }
 
-  // --- Caustic sparkles (light touch) ---
-  int cCols = 36;
-  int cRows = 22;
+  // --- Layer 3: Enhanced caustic network with organic patterns ---
+  int cCols = 50;
+  int cRows = 32;
   float cStepW = width / (float)cCols;
   float cStepH = height / (float)cRows;
   for (int ix = 0; ix < cCols; ix++) {
@@ -371,14 +395,64 @@ void drawWaterInteraction() {
     for (int iy = 0; iy < cRows; iy++) {
       float y = (iy + 0.5) * cStepH;
       float w = sampleWakeAt(x, y);
-      if (w <= 0.03) continue;
-      float sparkle = noise(x * 0.01, y * 0.01, t * 0.4);
-      if (sparkle < 0.72) continue;
+      if (w <= 0.025) continue;
+      
+      // Multi-layer caustic noise for organic, light-ray feel
+      float n1 = noise(x * 0.015, y * 0.015, t * 0.5);
+      float n2 = noise(x * 0.025 + 100, y * 0.025 + 100, t * 0.35);
+      float causticPattern = (n1 * 0.6 + n2 * 0.4);
+      
+      // Threshold creates concentrated light patches
+      if (causticPattern < 0.65) continue;
+      
       float edge = sampleWakeGradient(x, y).mag();
-      float a = constrain(w * WATER_CAUSTIC_ALPHA_SCALE * 12.0 * (0.4 + edge), 0, 70);
-      stroke(200, 220, 255, a);
-      strokeWeight(1);
-      point(x + (sparkle - 0.5) * 6, y + (sparkle - 0.5) * 6);
+      float intensity = (causticPattern - 0.65) / 0.35; // 0..1 above threshold
+      
+      // Brighter, more saturated caustics
+      float a = constrain(w * WATER_CAUSTIC_ALPHA_SCALE * 18.0 * intensity * (0.5 + edge * 1.2), 0, 140);
+      
+      // Draw small caustic cluster
+      noStroke();
+      fill(180, 220, 255, a * 0.8);
+      float size = lerp(2, 8, intensity);
+      ellipse(x + (n1 - 0.5) * 8, y + (n2 - 0.5) * 8, size, size);
+      
+      // Add bright core
+      if (intensity > 0.7) {
+        fill(230, 245, 255, a);
+        ellipse(x + (n1 - 0.5) * 8, y + (n2 - 0.5) * 8, size * 0.4, size * 0.4);
+      }
+    }
+  }
+  
+  // --- Layer 4: Particle-like flow elements (flowing debris) ---
+  int pCols = 24;
+  int pRows = 16;
+  float pStepW = width / (float)pCols;
+  float pStepH = height / (float)pRows;
+  for (int ix = 0; ix < pCols; ix++) {
+    float x = (ix + 0.5) * pStepW;
+    for (int iy = 0; iy < pRows; iy++) {
+      float y = (iy + 0.5) * pStepH;
+      float w = sampleWakeAt(x, y);
+      if (w <= 0.04) continue;
+      
+      sampleFlow(x, y, flowScratch);
+      float flowMag = flowScratch.mag();
+      if (flowMag < 0.05) continue;
+      
+      // Animated offset following flow
+      float offset = (t * 0.8 + ix * 0.3 + iy * 0.7) % 1.0;
+      float particleX = x + flowScratch.x * offset * 15;
+      float particleY = y + flowScratch.y * offset * 15;
+      
+      // Fade in/out along path
+      float fade = sin(offset * PI);
+      float a = constrain(w * fade * 60, 0, 80);
+      
+      noStroke();
+      fill(90, 160, 220, a);
+      ellipse(particleX, particleY, 2.5, 2.5);
     }
   }
 }

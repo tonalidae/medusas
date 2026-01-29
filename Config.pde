@@ -18,8 +18,9 @@ boolean waterFramesWarned = false;
 boolean useWaterFrames = true;
 boolean showWaterTex = true;
 boolean showWaterInteraction = true; // render wake-based water ink/strokes/caustics
+boolean showFlowTrails = false;       // show organic flow trails layer
 // Blend mode choice: false -> BLEND (subtle), true -> SCREEN (gentle brighten)
-boolean useScreenBlend = true;
+boolean useScreenBlend = false;
 float waterAlpha = 25; // tint alpha when drawing overlay (0-255) — lowered for greater transparency
 float waterFPS = 12.0;
 OscP5 oscP5;
@@ -71,10 +72,10 @@ boolean debugCycles = false;
 boolean debugBiologicalVectors = false;
 
 // --- Water interaction rendering ---
-// Tone down water overlay alpha scales so background gradient remains visible
-float WATER_INK_ALPHA_SCALE = 10.0;     // Dominant layer (mass)
-float WATER_STROKE_ALPHA_SCALE = 4.0;   // Direction layer (~30-40%)
-float WATER_CAUSTIC_ALPHA_SCALE = 2.5;  // Sparkle layer (~20-30%)
+// Enhanced fluid visualization scales for richer, more dynamic appearance
+float WATER_INK_ALPHA_SCALE = 12.0;     // Dominant depth layer with iridescence
+float WATER_STROKE_ALPHA_SCALE = 5.5;   // Organic flow trails
+float WATER_CAUSTIC_ALPHA_SCALE = 3.2;  // Enhanced caustic light network
 
 
 
@@ -98,7 +99,7 @@ float STEER_FLIP_DOT = -0.2; // If desired steer points opposite, damp the flip
 float STEER_FLIP_SLOW = 0.15; // Extra damping factor on flips
 float MAX_TURN_RAD = 0.25; // Max turn per frame (~14 deg)
 
-boolean LOCK_MOOD_TO_PERSONALITY = true;
+boolean LOCK_MOOD_TO_PERSONALITY = false;
 
 // --- Stability tuning (multi-agent robustness) ---
 int ATTN_MIN = 2;

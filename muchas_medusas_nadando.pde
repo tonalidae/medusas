@@ -37,8 +37,8 @@ void draw() {
 
   // Draw water overlay (either frames or procedural half-res buffer)
   if (showWaterTex) {
-    // Choose blend: BLEND for subtle alpha compositing, SCREEN for gentle brightening
-      blendMode(BLEND);
+    // Enhanced blend mode for better depth and luminosity
+    blendMode(useScreenBlend ? SCREEN : BLEND);
     tint(255, waterAlpha);
     if (useWaterFrames && waterFramesAvailable && waterFrameCount > 0) {
       int idx = advanceWaterFrame();
@@ -110,7 +110,7 @@ void draw() {
     }
     popStyle();
   }
-  if (debugWake) {
+  if (debugWake && !(handNear || mousePressed || mouseSpeed > 12)) {
     drawWakeGrid();
   }
 
