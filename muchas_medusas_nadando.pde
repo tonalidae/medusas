@@ -88,7 +88,10 @@ void draw() {
     handProximity = 0;
     handProximitySmoothed = 0;
     // Reset points so the next touch doesn't create a "teleport" splash
-    for(int i=0; i<prevHandPoints.length; i++) prevHandPoints[i] = null;
+    for(int i=0; i<prevHandPoints.length; i++) {
+      prevHandPoints[i] = null;
+      prevHandDepth[i] = 0;
+    }
   }
 
   // 2. Mouse Fallback (Only works if no hand is detected)
@@ -1009,8 +1012,11 @@ void oscEvent(OscMessage msg) {
     float proximityBest = 0; // track strongest proximity estimate this frame
     float primaryX = -1, primaryY = -1, primarySpeed = 0;
     float primaryPrevX = -1, primaryPrevY = -1;
+    float primaryDepth = 0, primaryPrevDepth = 0;
     boolean primarySet = false;
     boolean primaryHadPrev = false;
+    boolean primaryHasDepth = false;
+    boolean primaryHadPrevDepth = false;
 
     for (int h = 0; h < numHands; h++) {
       // Map the incoming index-finger to the same slot as before: (hand * 6) + 1
@@ -1068,6 +1074,8 @@ void oscEvent(OscMessage msg) {
         prev = new PVector(x, y);
         prevHandPoints[pointIndex] = prev;
       }
+      float prevDepth = prevHandDepth[pointIndex];
+      boolean hadPrevDepth = tripletMode && prevDepth != 0;
 
       float prevX = prev.x;
       float prevY = prev.y;
@@ -1088,6 +1096,7 @@ void oscEvent(OscMessage msg) {
       }
 
       prevHandPoints[pointIndex].set(x, y);
+      prevHandDepth[pointIndex] = depth;
       // Track primary pointer (index fingertip) for engagement logic
       primaryX = x;
       primaryY = y;
@@ -1096,11 +1105,18 @@ void oscEvent(OscMessage msg) {
       primaryPrevX = prevX;
       primaryPrevY = prevY;
       primaryHadPrev = true;
+      primaryDepth = depth;
+      primaryPrevDepth = prevDepth;
+      primaryHasDepth = tripletMode;
+      primaryHadPrevDepth = hadPrevDepth;
     }
 
     // Clear any leftover points from previous frames that we are not using now
     for (int j = 0; j < prevHandPoints.length; j++) {
-      if (!used[j]) prevHandPoints[j] = null;
+      if (!used[j]) {
+        prevHandPoints[j] = null;
+        prevHandDepth[j] = 0;
+      }
     }
 
     // Update proximity state with hysteresis to avoid flicker
@@ -1113,10 +1129,13 @@ void oscEvent(OscMessage msg) {
     }
 
     boolean wasEngaged = handEngaged;
+    float depthDelta = (primaryHasDepth && primaryHadPrevDepth) ? abs(primaryDepth - primaryPrevDepth) : 0;
+    boolean stableDepth = (!primaryHasDepth || (primaryHasDepth && depthDelta < HAND_DEPTH_STILL_THR));
     boolean launchMove = wasEngaged && primarySet && primarySpeed >= HAND_RELEASE_WAKE_SPEED;
+    boolean harshPressMove = handEngaged && primarySet && primarySpeed >= HAND_FEAR_SPEED && !stableDepth;
 
     // Engagement: still + near counts as a press
-    if (handNear && primarySet && primarySpeed < HAND_STILL_SPEED) {
+    if (handNear && primarySet && primarySpeed < HAND_STILL_SPEED && stableDepth) {
       handStillMs += dtMs;
     } else {
       handStillMs = 0;
@@ -1135,6 +1154,18 @@ void oscEvent(OscMessage msg) {
       depositWakeBlob(primaryX, primaryY, pressRadius, userDeposit * 1.1);
     }
 
+    // While engaged and depth is steady, treat motion like mouse drag (ink without fear)
+    if (handEngaged && primarySet && primaryHadPrev && stableDepth && primarySpeed > 2.0) {
+      int steps = max(2, int(map(primarySpeed, 2, 40, 2, 10)));
+      for (int i = 0; i < steps; i++) {
+        float t = (float)i / (float)(steps - 1);
+        float px = lerp(primaryPrevX, primaryX, t);
+        float py = lerp(primaryPrevY, primaryY, t);
+        float radius = lerp(40, 65, t);
+        depositWakeBlob(px, py, radius, userDeposit);
+      }
+    }
+
     // On launch from a press, lay down an initial trail burst
     if (launchMove && primarySet && primaryHadPrev) {
       for (int i = 0; i < HAND_RELEASE_WAKE_STEPS; i++) {
@@ -1143,6 +1174,27 @@ void oscEvent(OscMessage msg) {
         float py = lerp(primaryPrevY, primaryY, t);
         float radius = lerp(45, 70, t);
         depositWakeBlob(px, py, radius, userDeposit * HAND_RELEASE_WAKE_MULT);
+      }
+    }
+
+    // Harsh motion while pressing: trigger fear + avoidance
+    if (harshPressMove && (nowMs - handFearLastMs) > HAND_FEAR_COOLDOWN_MS) {
+      handFearLastMs = nowMs;
+      markUserFearEvent();
+      // Fear field splash so nearby jellies read the threat
+      splatMoodField(primaryX, primaryY, MOOD_FIELD_SPLAT * HAND_FEAR_FIELD_SCALE, 0);
+      // Directly scare jellies within radius
+      if (gusanos != null) {
+        for (Gusano g : gusanos) {
+          Segmento head = g.segmentos.get(0);
+          if (head == null) continue;
+          if (dist(head.x, head.y, primaryX, primaryY) <= HAND_FEAR_RADIUS) {
+            if (g.state != Gusano.FEAR && g.fearCooldownFrames <= 0) {
+              g.lastFearReason = "HAND_PRESS_HARSH";
+              g.mood.setState(Gusano.FEAR, random(1.4, 2.4));
+            }
+          }
+        }
       }
     }
   }
