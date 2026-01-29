@@ -56,6 +56,16 @@ boolean HAND_FLIP_Y = false;   // Set true if camera is upside-down
 
 int HAND_TIMEOUT_MS = 1000;
 
+// --- User tap burst detection (mouse or hand) ---
+float tapScore = 0;                 // accumulates recent taps
+int tapLastUpdateMs = 0;
+int tapLastTriggerMs = -9999;
+float TAP_DECAY_PER_SEC = 1.5;      // how fast tapScore decays without taps
+int TAP_FEAR_THR = 6;               // taps within window to scare
+int TAP_AGG_THR = 12;               // taps within window to anger
+int TAP_TRIGGER_COOLDOWN_MS = 2500; // cooldown after forcing a mood burst
+boolean prevMouseDown = false;      // edge detect mouse taps
+
 // Engagement model: a still, near hand counts as a "press"
 boolean handEngaged = false;
 int handStillMs = 0;
@@ -71,6 +81,32 @@ float HAND_FEAR_RADIUS = 220;          // radius in px to scare nearby jellies
 float HAND_FEAR_FIELD_SCALE = 1.4;     // extra fear deposited into mood field
 int HAND_FEAR_COOLDOWN_MS = 450;       // min gap between forced fear events
 float HAND_DEPTH_STILL_THR = 0.045;    // max normalized depth change while still (triplet mode)
+
+// Tap normalization and gating
+float TAP_DECAY_PER_SEC_ACTIVE = 0.8;
+float TAP_DECAY_PER_SEC_IDLE = 1.5;
+float tapDecayPerSec = TAP_DECAY_PER_SEC_IDLE;
+float lastTapX = -1000, lastTapY = -1000;
+int lastTapMs = -9999;
+int MIN_TAP_DIST = 25;
+int MIN_TAP_GAP_MS = 220;
+int TAP_DEPTH_STABLE_MS = 80;
+// Per-hand debounce
+int[] handTapCount = new int[2];
+int[] handTapLastMs = new int[2];
+int pendingTapHand = -1;
+int pendingTapStartMs = -9999;
+int lastUserAggMs = -9999; // last time user acted aggressively (harsh/tap scare)
+
+// Friendly interaction accumulation (hand tracker)
+float[] handFriendlyMs = new float[2];
+int[] handFriendlyStableMs = new int[2];
+float FRIEND_SPEED_THR = 3.0;
+int FRIEND_DEPTH_STABLE_MS = 80;
+float FRIEND_AFFINITY_RATE = 0.0022; // per second of gentle presence (boosted affection)
+float FRIEND_RADIUS = 320;
+float swarmCentroidX = 0;
+float swarmCentroidY = 0;
 
 
 ArrayList<Gusano> gusanos;
@@ -247,6 +283,7 @@ float clampMarginBottom = 260;
 HashMap<Long, ArrayList<Gusano>> spatialGrid = new HashMap<Long, ArrayList<Gusano>>();
 // Cell size should be >= max interaction radius (cohesion/pursuit). Adjust as needed.
 float gridCellSize = 260;
+ArrayList<Gusano> neighborScratch = new ArrayList<Gusano>(32);
 
 // --- Mood propagation grid (fear/calm waves) ---
 class MoodField {

@@ -369,9 +369,6 @@ class GusanoMood {
         moodStrength = lerp(0.8, 1.4, g.timidity);
         break;
     }
-    // Expose to renderer so color can reflect intensity
-    g.moodHeat = moodStrength;
-
     float targetPulseRate = g.basePulseRate;
     float targetPulseStrength = g.basePulseStrength;
     float targetDrag = g.baseDrag;
@@ -425,6 +422,20 @@ class GusanoMood {
         targetTurbScale = 1.2;
         targetHeadNoise = 0.8;
         break;
+    }
+
+    // Affinity bias: friendly nudges toward curiosity/calm; resentful nudges toward shy/fear.
+    if (g.userAffinity != 0) {
+      float a = constrain(g.userAffinity, -1, 1);
+      moodStrength *= 1.0 + 0.08 * a;
+      if (a > 0) {
+        targetPulseRate *= 1.02;
+        targetTurn *= 1.05;
+      } else {
+        targetPulseRate *= 0.98;
+        targetTurn *= 0.95;
+        targetFollowScale *= 0.95;
+      }
     }
 
     targetPulseRate = g.basePulseRate + (targetPulseRate - g.basePulseRate) * moodStrength;

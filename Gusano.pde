@@ -123,6 +123,9 @@ class Gusano {
   float fieldFear = 0;            // sampled fear field
   float fieldCalm = 0;            // sampled calm field
   int fieldFearHoldFrames = 0;
+  // User affinity memory: -1 resentful, +1 friendly, decays ~30s half-life
+  float userAffinity = 0;
+  int affinityLastMs = -1;
   float energy = 1.0;             // 0..1 fatigue meter
   int buddyId = -1;
   int buddyLockMs = -9999;
@@ -260,6 +263,11 @@ class Gusano {
     cycleStartMs = millis();
   }
 
+  void adjustAffinity(float delta) {
+    userAffinity = constrain(userAffinity + delta, -1, 1);
+    affinityLastMs = millis();
+  }
+
   void actualizar() {
     Segmento cabeza = segmentos.get(0);
     // [PATCH 1] Validate incoming velocity
@@ -268,6 +276,15 @@ class Gusano {
     // Startup / low-FPS safety: prevent huge impulses when frameRate is small
     dt = constrain(dt, 1.0/120.0, 1.0/20.0);
     float dtNorm = dt * 60.0;
+    int nowMs = millis();
+    if (affinityLastMs < 0) affinityLastMs = nowMs;
+    int dtMsAffinity = max(1, nowMs - affinityLastMs);
+    boolean suppressDecay = (userAffinity < 0 && (nowMs - lastUserAggMs) < 5000);
+    if (!suppressDecay) {
+      float decay = pow(0.5, dtMsAffinity / 120000.0); // half-life ~120s
+      userAffinity *= decay;
+    }
+    affinityLastMs = nowMs;
     float marginBottom = clampMarginBottom;
 
     float vmagNow = vel.mag();
@@ -401,9 +418,9 @@ class Gusano {
       pulsePhase -= 1.0;
     }
     if (pulsePhase < prevPhase) {
-      int nowMs = millis();
+      int cycleNowMs = millis();
       if (cycleStartMs > 0) {
-        float dtCycle = (nowMs - cycleStartMs) / 1000.0;
+        float dtCycle = (cycleNowMs - cycleStartMs) / 1000.0;
         lastCycleHz = (dtCycle > 0.0001) ? (1.0 / dtCycle) : 0;
         lastCycleDist = dist(cycleStartX, cycleStartY, cabeza.x, cabeza.y);
         lastCycleSpeed = lastCycleHz * lastCycleDist;
@@ -424,10 +441,10 @@ class Gusano {
                   " spd=" + nf(lastCycleSpeed, 0, 2) +
                   " avgHz=" + nf(avgCycleHz, 0, 2) +
                   " avgDist=" + nf(avgCycleDist, 0, 2) +
-                  " avgSpd=" + nf(avgCycleSpeed, 0, 2));
+              " avgSpd=" + nf(avgCycleSpeed, 0, 2));
         }
       }
-      cycleStartMs = nowMs;
+      cycleStartMs = cycleNowMs;
       cycleStartX = cabeza.x;
       cycleStartY = cabeza.y;
     }

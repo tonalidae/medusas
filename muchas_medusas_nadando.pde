@@ -3,10 +3,10 @@ import netP5.*;
 import java.util.Map;
 
 // Configuration moved to Config.pde
-// Configuration moved to Config.pde
 
 void setup() {
   size(1280, 800, P2D);
+  // Use a simple per-frame background clear instead of a pre-rendered gradient.
   oscP5 = new OscP5(this, 12000);
 println("[OSC] Listening on port 12000");
   stroke(0, 66);
@@ -33,8 +33,11 @@ println("[OSC] Listening on port 12000");
 }
 
 void draw() {
-  background(#050008);
   t = millis() * timeScale;
+  decayTapScore(); // keep tapScore time-based
+
+  // Clear background each frame (simple deep-sea color)
+  background(#0B1327);
 
   // Screen shake scales with smoothed global fear
   float shakeAmp = lerp(FEAR_SHAKE_MIN, FEAR_SHAKE_MAX, fearIntensity);
@@ -45,6 +48,7 @@ void draw() {
   if (showWaterTex) {
     // Enhanced blend mode for better depth and luminosity
     blendMode(useScreenBlend ? SCREEN : BLEND);
+    // Use plain white tint with alpha and draw full-screen (no pad)
     tint(255, waterAlpha);
     if (useWaterFrames && waterFramesAvailable && waterFrameCount > 0) {
       int idx = advanceWaterFrame();
@@ -69,6 +73,13 @@ void draw() {
   mouseSpeed = dist(mouseX, mouseY, lastMouseX, lastMouseY);
   lastMouseX = mouseX;
   lastMouseY = mouseY;
+  if (mousePressed && !prevMouseDown) {
+    registerUserTap();
+    lastTapX = mouseX;
+    lastTapY = mouseY;
+    lastTapMs = millis();
+  }
+  prevMouseDown = mousePressed;
 
   updateWakeGrid();
   if (showWaterInteraction) {
@@ -78,6 +89,7 @@ void draw() {
   updateUserFlowFeedback();
   decayMoodGrid();
   rebuildSpatialGrid();
+  computeSwarmCentroid();
   // 1. Hand Timeout
   if (millis() - lastHandTime > HAND_TIMEOUT_MS) {
     handPresent = false;
@@ -196,6 +208,73 @@ void draw() {
 void markUserFearEvent() {
   userFearIntensity = min(1.0, userFearIntensity + USER_FEAR_BOOST);
   userFearLastMs = millis();
+  lastUserAggMs = userFearLastMs;
+  applyUserAffinityDelta(-0.25);
+}
+
+void applyUserAffinityDelta(float delta) {
+  if (gusanos == null) return;
+  for (Gusano g : gusanos) {
+    if (g == null) continue;
+    g.adjustAffinity(delta);
+  }
+}
+
+// --- Tap burst -> global mood response ---
+void decayTapScore() {
+  int now = millis();
+  if (tapLastUpdateMs == 0) {
+    tapLastUpdateMs = now;
+    return;
+  }
+  float dtSec = max(0, (now - tapLastUpdateMs) / 1000.0);
+  tapScore = max(0, tapScore - dtSec * tapDecayPerSec);
+  tapLastUpdateMs = now;
+}
+
+void registerUserTap() {
+  registerUserTap(HAND_RELEASE_WAKE_SPEED * 0.5);
+}
+
+void registerUserTap(float speedNorm) {
+  // Normalize tap score by hand speed
+  float inc = map(speedNorm, 0, HAND_RELEASE_WAKE_SPEED * 1.2, 0.6, 1.4);
+  tapScore += inc;
+  tapLastUpdateMs = millis();
+}
+
+void maybeTriggerTapMood() {
+  int now = millis();
+  if (now - tapLastTriggerMs < TAP_TRIGGER_COOLDOWN_MS) return;
+  boolean hitFear = tapScore >= TAP_FEAR_THR;
+  boolean hitAgg = tapScore >= TAP_AGG_THR;
+  if (!hitFear && !hitAgg) return;
+
+  boolean makeAgg = hitAgg; // prefer aggressive when high threshold
+  if (hitFear && !hitAgg) {
+    // 50/50 scare vs. aggro when only fear threshold hit
+    makeAgg = random(1) < 0.5;
+  }
+
+  float dur = makeAgg ? random(3.0, 5.0) : random(1.6, 2.6);
+  if (gusanos != null) {
+    for (Gusano g : gusanos) {
+      if (g == null || g.mood == null) continue;
+      if (makeAgg) {
+        g.mood.setState(Gusano.AGGRESSIVE, dur);
+        g.lastAggressiveEntryMs = now;
+      } else {
+        g.lastFearReason = "TAP_BURST";
+        g.mood.setState(Gusano.FEAR, dur);
+        g.lastFearEntryMs = now;
+      }
+    }
+  }
+  markUserFearEvent();
+  tapScore = 0;
+  tapLastTriggerMs = now;
+  // decay faster when no hand present
+  tapDecayPerSec = handPresent ? TAP_DECAY_PER_SEC_ACTIVE : TAP_DECAY_PER_SEC_IDLE;
 }
 
 // Controles para ajustar parametros
@@ -321,6 +400,11 @@ void resetInteractionMemory() {
 
 
 
+// --- Background helpers ---
+void buildDeepSeaGradient() {
+  // Gradient pre-rendering removed; using simple background clear instead.
+}
+
 // --- Water texture helpers ---
 void updateWaterTexture() {
   if (waterTex == null) return;
@@ -355,10 +439,11 @@ void updateWaterTexture() {
       float v = (w1 + w2 + w3) * 0.25 + (n - 0.5) * 0.6; // ~[-1..1]
       v = constrain(v * 0.5 + 0.5, 0, 1); // -> [0..1]
 
-      // Subtle caustics: render as grayscale so overlay doesn't tint scene
+      // Deep-sea caustics: grayscale procedural texture with subtle alpha
       int a = int(10 + 35 * v);
-      int gray = int(constrain(10 + 220.0 * v, 0, 255));
-      waterTex.pixels[y * wT + x] = color(gray, gray, gray, a);
+      int grey = int(v * 255);
+      int base = color(grey);
+      waterTex.pixels[y * wT + x] = (a << 24) | (base & 0x00FFFFFF);
     }
   }
 
@@ -595,17 +680,41 @@ void rebuildSpatialGrid() {
 }
 
 ArrayList<Gusano> queryNeighbors(float x, float y) {
-  ArrayList<Gusano> out = new ArrayList<Gusano>();
+  neighborScratch.clear();
   int cx = floor(x / gridCellSize);
   int cy = floor(y / gridCellSize);
   for (int oy = -1; oy <= 1; oy++) {
     for (int ox = -1; ox <= 1; ox++) {
       long key = cellKey(cx + ox, cy + oy);
       ArrayList<Gusano> bucket = spatialGrid.get(key);
-      if (bucket != null) out.addAll(bucket);
+      if (bucket != null) neighborScratch.addAll(bucket);
     }
   }
-  return out;
+  return neighborScratch;
+}
+
+void computeSwarmCentroid() {
+  if (gusanos == null || gusanos.size() == 0) {
+    swarmCentroidX = width * 0.5;
+    swarmCentroidY = height * 0.5;
+    return;
+  }
+  float sx = 0, sy = 0;
+  int count = 0;
+  for (Gusano g : gusanos) {
+    if (g == null || g.segmentos == null || g.segmentos.size() == 0) continue;
+    Segmento h = g.segmentos.get(0);
+    sx += h.x;
+    sy += h.y;
+    count++;
+  }
+  if (count == 0) {
+    swarmCentroidX = width * 0.5;
+    swarmCentroidY = height * 0.5;
+  } else {
+    swarmCentroidX = sx / count;
+    swarmCentroidY = sy / count;
+  }
 }
 
 void drawDebugObjectives() {
@@ -1017,6 +1126,7 @@ void oscEvent(OscMessage msg) {
     boolean primaryHadPrev = false;
     boolean primaryHasDepth = false;
     boolean primaryHadPrevDepth = false;
+    int primaryHand = 0;
 
     for (int h = 0; h < numHands; h++) {
       // Map the incoming index-finger to the same slot as before: (hand * 6) + 1
@@ -1101,6 +1211,7 @@ void oscEvent(OscMessage msg) {
       primaryX = x;
       primaryY = y;
       primarySpeed = speed;
+      primaryHand = (pointIndex < 6) ? 0 : 1;
       primarySet = true;
       primaryPrevX = prevX;
       primaryPrevY = prevY;
@@ -1133,6 +1244,7 @@ void oscEvent(OscMessage msg) {
     boolean stableDepth = (!primaryHasDepth || (primaryHasDepth && depthDelta < HAND_DEPTH_STILL_THR));
     boolean launchMove = wasEngaged && primarySet && primarySpeed >= HAND_RELEASE_WAKE_SPEED;
     boolean harshPressMove = handEngaged && primarySet && primarySpeed >= HAND_FEAR_SPEED && !stableDepth;
+    int engagedHand = handEngaged ? primaryHand : -1;
 
     // Engagement: still + near counts as a press
     if (handNear && primarySet && primarySpeed < HAND_STILL_SPEED && stableDepth) {
@@ -1142,10 +1254,54 @@ void oscEvent(OscMessage msg) {
     }
     if (!handEngaged && handStillMs >= HAND_STILL_DWELL_MS) {
       handEngaged = true;
+      pendingTapHand = primaryHand;
+      pendingTapStartMs = nowMs;
     }
     if (handEngaged && (!handNear || !primarySet || primarySpeed > HAND_STILL_SPEED * 1.8)) {
       handEngaged = false;
       handStillMs = 0;
+    }
+    // Depth stability accumulation
+    if (handEngaged && primaryHasDepth) {
+      if (depthDelta < HAND_DEPTH_STILL_THR) {
+        handStillMs = min(handStillMs + dtMs, 10000); // reuse counter
+      } else {
+        handStillMs = max(0, handStillMs - dtMs);
+      }
+    }
+    // Gentle presence accumulation
+    if (handEngaged && primarySet) {
+      boolean depthGentle = (!primaryHasDepth) || (depthDelta < HAND_DEPTH_STILL_THR);
+      if (depthGentle) {
+        handFriendlyStableMs[primaryHand] = min(handFriendlyStableMs[primaryHand] + dtMs, 10000);
+      } else {
+        handFriendlyStableMs[primaryHand] = max(0, handFriendlyStableMs[primaryHand] - dtMs);
+      }
+      float dCentroid = dist(primaryX, primaryY, swarmCentroidX, swarmCentroidY);
+      if (handFriendlyStableMs[primaryHand] >= FRIEND_DEPTH_STABLE_MS &&
+          primarySpeed < FRIEND_SPEED_THR &&
+          dCentroid <= FRIEND_RADIUS) {
+        handFriendlyMs[primaryHand] += dtMs;
+      }
+    }
+    // Debounced tap: require engagement edge, small release spike, and depth stability
+    if (pendingTapHand >= 0 && handEngaged && primarySet) {
+      boolean speedRelease = primarySpeed > HAND_RELEASE_WAKE_SPEED * 0.35 && (nowMs - pendingTapStartMs) <= 150;
+      boolean depthStable = (!primaryHasDepth) || (handStillMs >= TAP_DEPTH_STABLE_MS);
+      boolean travelEnough = true;
+      if (lastTapMs > 0) {
+        float d = dist(primaryX, primaryY, lastTapX, lastTapY);
+        travelEnough = (d >= MIN_TAP_DIST) || (nowMs - lastTapMs >= MIN_TAP_GAP_MS);
+      }
+      if (speedRelease && depthStable && travelEnough) {
+        registerUserTap(primarySpeed);
+        handTapCount[min(pendingTapHand, handTapCount.length-1)]++;
+        handTapLastMs[min(pendingTapHand, handTapLastMs.length-1)] = nowMs;
+        lastTapX = primaryX;
+        lastTapY = primaryY;
+        lastTapMs = nowMs;
+        pendingTapHand = -1;
+      }
     }
 
     // Deposit a softer blob when engaged (press)
@@ -1197,5 +1353,15 @@ void oscEvent(OscMessage msg) {
         }
       }
     }
+    // On disengage, convert friendly time to affinity
+    if (wasEngaged && !handEngaged) {
+      int h = (engagedHand >= 0) ? engagedHand : 0;
+      float delta = (handFriendlyMs[h] / 1000.0) * FRIEND_AFFINITY_RATE;
+      if (delta != 0) applyUserAffinityDelta(delta);
+      handFriendlyMs[h] = 0;
+      handFriendlyStableMs[h] = 0;
+    }
   }
+  tapDecayPerSec = handPresent ? TAP_DECAY_PER_SEC_ACTIVE : TAP_DECAY_PER_SEC_IDLE;
+  maybeTriggerTapMood();
 }

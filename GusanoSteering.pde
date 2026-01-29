@@ -76,26 +76,42 @@ class GusanoSteering {
         g.lastUserSeenMs = millis();
         g.userInterest = 1.0;
       }
+      float affinity = g.userAffinity;
       float fearMem = g.fearMemory * exp(-(millis() - g.lastFearUserMs) / FEAR_MEMORY_MS);
+      float globalFear = fearIntensity; // average swarm fear (0..1)
+      float effectiveFear = max(fearMem, globalFear * 0.8);
 
       // Fear gets partial phase bypass (survival)
       float fearPhaseGate = (g.state == Gusano.FEAR) ? lerp(0.6, 1.0, contractCurve) : steerPhaseGate;
       
-      if (g.state == Gusano.FEAR || fearMem > 0.05 || (mousePressed && dMouse < 100)) {
+      if (g.state == Gusano.FEAR || effectiveFear > 0.05 || (mousePressed && dMouse < 100)) {
         float fleeScale = 6.0 * fearPhaseGate;
-        if (fearMem > 0.05) fleeScale *= lerp(1.0, FEAR_AVOID_BOOST, fearMem);
+        if (effectiveFear > 0.05) fleeScale *= lerp(1.0, FEAR_AVOID_BOOST, effectiveFear);
+        fleeScale *= (1.0 + globalFear * 1.5); // swarm-wide fear -> stronger avoidance
+        boolean userChasing = (dMouse < 260 && mouseSpeed > 6) || (handPresent && mouseSpeed > 4);
+        if (g.state == Gusano.FEAR && userChasing) {
+          fleeScale *= 1.4;
+          PVector dodge = new PVector(-toMouse.y, toMouse.x);
+          float dodgeScale = (1.0 + globalFear) * 0.35;
+          desired.add(PVector.mult(dodge, dodgeScale)); // sideways drift to evade
+        }
+        if (affinity < -0.1) fleeScale *= (1.1 + -affinity * 0.5); // resentful flees more
         PVector m = PVector.mult(toMouse, -fleeScale);
         desired.add(m); // Flee from predator
         g.debugSteerMouse.set(m);
+        g.adjustAffinity(-0.0015); // being scared nudges resentment
       } else {
         float mem = g.userInterest * exp(-(millis() - g.lastUserSeenMs) / CURIOUS_STICK_MS);
         if ((g.state == Gusano.CURIOUS || mem > 0.1) && mouseSpeed < 6) {
           // Gentle approach plus sideways orbit so it feels exploratory
-          float attract = (CURIOUS_ATTRACT + 0.6 * mem) * steerPhaseGate;
+          float friendlyBoost = (affinity > 0) ? (1.0 + affinity * 0.6) : (1.0 + affinity * 0.2);
+          float fearDampen = 1.0 - min(0.8, globalFear * 0.8); // reduce attraction when swarm is scared
+          float attract = (CURIOUS_ATTRACT + 0.6 * mem) * steerPhaseGate * friendlyBoost * fearDampen;
           PVector orbit = new PVector(-toMouse.y, toMouse.x).mult(CURIOUS_ORBIT * mem);
           PVector m = PVector.mult(toMouse, attract).add(orbit);
           desired.add(m);
           g.debugSteerMouse.set(m);
+          g.adjustAffinity(0.0015); // calm proximity builds friendliness
         }
       }
     }
