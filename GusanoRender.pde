@@ -1,3 +1,16 @@
+// Global cache for jelly shapes (Processing treats classes as inner to PApplet, so keep this top-level)
+class ShapeCache {
+  float[] k;
+  float[] d;
+  float[] py;
+  float[] vertProg;
+  float[] qConst;
+  float[] qScale;
+  float[] sinBase;
+}
+final int POINT_COUNT = 5000;
+ShapeCache[] gusanoShapeCaches = new ShapeCache[4];
+
 class GusanoRender {
   Gusano g;
   float alignDx = 0;
@@ -5,6 +18,91 @@ class GusanoRender {
 
   GusanoRender(Gusano g) {
     this.g = g;
+  }
+
+  // Lazy init: build cache for the current variant once.
+  ShapeCache cacheForVariant(int variant) {
+    variant = ((variant % 4) + 4) % 4; // safe modulo
+    if (gusanoShapeCaches[variant] != null) return gusanoShapeCaches[variant];
+
+    ShapeCache c = new ShapeCache();
+    c.k = new float[POINT_COUNT];
+    c.d = new float[POINT_COUNT];
+    c.py = new float[POINT_COUNT];
+    c.vertProg = new float[POINT_COUNT];
+    c.qConst = new float[POINT_COUNT];
+    c.qScale = new float[POINT_COUNT];
+    c.sinBase = new float[POINT_COUNT];
+
+    float minPY = 100;
+    float maxPY = 400;
+
+    for (int i = 0; i < POINT_COUNT; i++) {
+      float x_param = i % 200;
+      float y_param = i / 35.0;
+
+      float k, e, d, py, qConst, qScale, sinBase;
+      switch (variant) {
+        case 0:
+          k = 5 * cos(x_param / 14) * cos(y_param / 30);
+          e = y_param / 8 - 13;
+          d = sq(mag(k, e)) / 59 + 4;
+          py = d * 45;
+          qConst = -3 * sin(atan2(k, e) * e) + k * 3;
+          qScale = k * (4 / d); // multiply by sin(d*d - t*2) each frame
+          sinBase = d * d;
+          break;
+        case 1:
+          k = 6 * cos((x_param * 1.1) / 12) * cos((y_param * 0.9) / 25);
+          e = (y_param * 0.9) / 7 - 15;
+          d = sq(mag(k, e)) / 50 + 3;
+          py = d * 40;
+          qConst = -2 * sin(atan2(k, e) * e) + k * 2;
+          qScale = k * (5 / d); // sin(d*d - t*1.5)
+          sinBase = d * d;
+          break;
+        case 2:
+          k = 4 * cos((x_param * 0.9) / 16) * cos((y_param * 1.1) / 35);
+          e = (y_param * 1.1) / 9 - 11;
+          d = sq(mag(k, e)) / 65 + 5;
+          py = d * 50;
+          qConst = -4 * sin(atan2(k, e) * e) + k * 4;
+          qScale = k * (3 / d); // sin(d*d - t*2.5)
+          sinBase = d * d;
+          break;
+        case 3:
+          k = 7 * cos((x_param * 1.2) / 10) * cos((y_param * 0.8) / 20);
+          e = (y_param * 0.8) / 6 - 17;
+          d = sq(mag(k, e)) / 45 + 2;
+          py = d * 35;
+          qConst = -5 * sin(atan2(k, e) * e) + k * 5;
+          qScale = k * (6 / d); // sin(d*d - t*3)
+          sinBase = d * d;
+          break;
+        default:
+          k = 5 * cos(x_param / 14) * cos(y_param / 30);
+          e = y_param / 8 - 13;
+          d = sq(mag(k, e)) / 59 + 4;
+          py = d * 45;
+          qConst = -3 * sin(atan2(k, e) * e) + k * 3;
+          qScale = k * (4 / d);
+          sinBase = d * d;
+          break;
+      }
+
+      float verticalProgression = constrain(map(py, minPY, maxPY, 0, 1), 0, 1);
+
+      c.k[i] = k;
+      c.d[i] = d;
+      c.py[i] = py;
+      c.vertProg[i] = verticalProgression;
+      c.qConst[i] = qConst;
+      c.qScale[i] = qScale;
+      c.sinBase[i] = sinBase;
+    }
+
+    gusanoShapeCaches[variant] = c;
+    return c;
   }
 
   void dibujarForma() {
@@ -44,64 +142,33 @@ class GusanoRender {
     float sumWorldY = 0;
     int localCount = 0;
 
-    for (int i = 5000; i > 0; i--) {
-      float x_param = i % 200;
-      float y_param = i / 35.0;
+    ShapeCache cache = cacheForVariant(g.id % 4);
+    float timeFreq;
+    switch (g.id % 4) {
+      case 0: timeFreq = 2.0; break;
+      case 1: timeFreq = 1.5; break;
+      case 2: timeFreq = 2.5; break;
+      case 3: timeFreq = 3.0; break;
+      default: timeFreq = 2.0; break;
+    }
 
-      float k, e, d, q, px, py;
-
-      switch(g.id % 4) {
-        case 0:
-          k = 5 * cos(x_param / 14) * cos(y_param / 30);
-          e = y_param / 8 - 13;
-          d = sq(mag(k, e)) / 59 + 4;
-          q = - 3 * sin(atan2(k, e) * e) + k * (3 + 4 / d * sin(d * d - t * 2));
-          py = d * 45;
-          break;
-        case 1:
-          k = 6 * cos((x_param*1.1) / 12) * cos((y_param*0.9) / 25);
-          e = (y_param*0.9) / 7 - 15;
-          d = sq(mag(k, e)) / 50 + 3;
-          q = - 2 * sin(atan2(k, e) * e) + k * (2 + 5 / d * sin(d * d - t * 1.5));
-          py = d * 40;
-          break;
-        case 2:
-          k = 4 * cos((x_param*0.9) / 16) * cos((y_param*1.1) / 35);
-          e = (y_param*1.1) / 9 - 11;
-          d = sq(mag(k, e)) / 65 + 5;
-          q = - 4 * sin(atan2(k, e) * e) + k * (4 + 3 / d * sin(d * d - t * 2.5));
-          py = d * 50;
-          break;
-        case 3:
-          k = 7 * cos((x_param*1.2) / 10) * cos((y_param*0.8) / 20);
-          e = (y_param*0.8) / 6 - 17;
-          d = sq(mag(k, e)) / 45 + 2;
-          q = - 5 * sin(atan2(k, e) * e) + k * (5 + 6 / d * sin(d * d - t * 3));
-          py = d * 35;
-          break;
-        default:
-          k = 5 * cos(x_param / 14) * cos(y_param / 30);
-          e = y_param / 8 - 13;
-          d = sq(mag(k, e)) / 59 + 4;
-          q = - 3 * sin(atan2(k, e) * e) + k * (3 + 4 / d * sin(d * d - t * 2));
-          py = d * 45;
-          break;
-      }
-
-      float minPY = 100;
-      float maxPY = 400;
-      float verticalProgression = constrain(map(py, minPY, maxPY, 0, 1), 0, 1);
+    for (int idx = 0; idx < POINT_COUNT; idx++) {
+      float k = cache.k[idx];
+      float d = cache.d[idx];
+      float pyVal = cache.py[idx];
+      float verticalProgression = cache.vertProg[idx];
+      float q = cache.qConst[idx] + cache.qScale[idx] * sin(cache.sinBase[idx] - t * timeFreq);
 
       float dragOffset = verticalProgression * 1.5;
       float phaseOffset = g.noiseOffset * 0.001 + g.id * 0.13;
       float phase = wrap01(g.pulsePhase + phaseOffset - dragOffset * 0.08);
       float contraction = g.pulseShape(phase); // 0 = relaxed, 1 = contracted
       float contractCurve = g.pulseContractCurve(phase); // thrust-weighted contraction
-      float c = max(0.0001, g.contractPortion);
+      float cPortion = max(0.0001, g.contractPortion);
       float h = max(0.0, g.holdPortion);
-      float r = max(0.0001, 1.0 - c - h);
+      float r = max(0.0001, 1.0 - cPortion - h);
       float p = wrap01(phase);
-      float release = (p > c + h) ? (p - c - h) / r : 0.0;
+      float release = (p > cPortion + h) ? (p - cPortion - h) / r : 0.0;
       float rebound = 0.0;
       if (release > 0.0) {
         float bounce = sin(PI * min(release * 1.25, 1.0));
@@ -123,8 +190,8 @@ class GusanoRender {
       // Thrust-linked snap up, elastic settle down
       float localPulse = (contractCurve * 8.0 - rebound * 5.0) * (0.5 + 0.5 * topCurve);
 
-      px = q * localBreath;
-      py = py * verticalSqueeze;
+      float px = q * localBreath;
+      float py = pyVal * verticalSqueeze;
 
       int segmentIndex = int(verticalProgression * (g.segmentos.size() - 1));
       Segmento seg = g.segmentos.get(segmentIndex);
@@ -166,64 +233,23 @@ class GusanoRender {
     sumWorldY = 0;
     int worldCount = 0;
     beginShape(POINTS);
-    for (int i = 5000; i > 0; i--) {
-      float x_param = i % 200;
-      float y_param = i / 35.0;
-
-      float k, e, d, q, px, py;
-
-      switch(g.id % 4) { // Safer modulo in case you have > 4 worms
-        case 0:
-          k = 5 * cos(x_param / 14) * cos(y_param / 30);
-          e = y_param / 8 - 13;
-          d = sq(mag(k, e)) / 59 + 4;
-          q = - 3 * sin(atan2(k, e) * e) + k * (3 + 4 / d * sin(d * d - t * 2));
-          py = d * 45;
-          break;
-        case 1:
-          k = 6 * cos((x_param*1.1) / 12) * cos((y_param*0.9) / 25);
-          e = (y_param*0.9) / 7 - 15;
-          d = sq(mag(k, e)) / 50 + 3;
-          q = - 2 * sin(atan2(k, e) * e) + k * (2 + 5 / d * sin(d * d - t * 1.5));
-          py = d * 40;
-          break;
-        case 2:
-          k = 4 * cos((x_param*0.9) / 16) * cos((y_param*1.1) / 35);
-          e = (y_param*1.1) / 9 - 11;
-          d = sq(mag(k, e)) / 65 + 5;
-          q = - 4 * sin(atan2(k, e) * e) + k * (4 + 3 / d * sin(d * d - t * 2.5));
-          py = d * 50;
-          break;
-        case 3:
-          k = 7 * cos((x_param*1.2) / 10) * cos((y_param*0.8) / 20);
-          e = (y_param*0.8) / 6 - 17;
-          d = sq(mag(k, e)) / 45 + 2;
-          q = - 5 * sin(atan2(k, e) * e) + k * (5 + 6 / d * sin(d * d - t * 3));
-          py = d * 35;
-          break;
-        default: // Fallback
-          k = 5 * cos(x_param / 14) * cos(y_param / 30);
-          e = y_param / 8 - 13;
-          d = sq(mag(k, e)) / 59 + 4;
-          q = - 3 * sin(atan2(k, e) * e) + k * (3 + 4 / d * sin(d * d - t * 2));
-          py = d * 45;
-          break;
-      }
-
-      float minPY = 100;
-      float maxPY = 400;
-      float verticalProgression = constrain(map(py, minPY, maxPY, 0, 1), 0, 1);
+    for (int idx = 0; idx < POINT_COUNT; idx++) {
+      float k = cache.k[idx];
+      float d = cache.d[idx];
+      float pyVal = cache.py[idx];
+      float verticalProgression = cache.vertProg[idx];
+      float q = cache.qConst[idx] + cache.qScale[idx] * sin(cache.sinBase[idx] - t * timeFreq);
 
       float dragOffset = verticalProgression * 1.5;
       float phaseOffset = g.noiseOffset * 0.001 + g.id * 0.13;
       float phase = wrap01(g.pulsePhase + phaseOffset - dragOffset * 0.08);
       float contraction = g.pulseShape(phase); // 0 = relaxed, 1 = contracted
       float contractCurve = g.pulseContractCurve(phase); // thrust-weighted contraction
-      float c = max(0.0001, g.contractPortion);
+      float cPortion = max(0.0001, g.contractPortion);
       float h = max(0.0, g.holdPortion);
-      float r = max(0.0001, 1.0 - c - h);
+      float r = max(0.0001, 1.0 - cPortion - h);
       float p = wrap01(phase);
-      float release = (p > c + h) ? (p - c - h) / r : 0.0;
+      float release = (p > cPortion + h) ? (p - cPortion - h) / r : 0.0;
       float rebound = 0.0;
       if (release > 0.0) {
         float bounce = sin(PI * min(release * 1.25, 1.0));
@@ -245,8 +271,8 @@ class GusanoRender {
       // Thrust-linked snap up, elastic settle down
       float localPulse = (contractCurve * 8.0 - rebound * 5.0) * (0.5 + 0.5 * topCurve);
 
-      px = q * localBreath;
-      py = py * verticalSqueeze;
+      float px = q * localBreath;
+      float py = pyVal * verticalSqueeze;
 
       int segmentIndex = int(verticalProgression * (g.segmentos.size() - 1));
       Segmento seg = g.segmentos.get(segmentIndex);
