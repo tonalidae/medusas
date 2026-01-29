@@ -124,6 +124,15 @@ void draw() {
   }
 
   int fearCount = 0;
+  
+  // First pass: render bioluminescence glow (behind body)
+  if (useBioluminescence) {
+    for (Gusano gusano : gusanos) {
+      gusano.dibujarBiolight();
+    }
+  }
+  
+  // Second pass: update and render body structure
   for (Gusano gusano : gusanos) {
     gusano.actualizar();
     gusano.dibujarForma();
@@ -248,6 +257,22 @@ void keyPressed() {
   } else if (key == 'l' || key == 'L') {
     debugBiologicalVectors = !debugBiologicalVectors;
     println("[DEBUG] debugBiologicalVectors=" + debugBiologicalVectors);
+  } else if (key == '7') {
+    // Toggle bioluminescence
+    useBioluminescence = !useBioluminescence;
+    println("[BIOLIGHT] useBioluminescence=" + useBioluminescence);
+  } else if (key == '8') {
+    // Decrease bioluminescence intensity
+    BIOLIGHT_GLOBAL_INTENSITY = max(0.1, BIOLIGHT_GLOBAL_INTENSITY - 0.1);
+    println("[BIOLIGHT] intensity=" + nf(BIOLIGHT_GLOBAL_INTENSITY, 1, 2));
+  } else if (key == '9') {
+    // Increase bioluminescence intensity
+    BIOLIGHT_GLOBAL_INTENSITY = min(3.0, BIOLIGHT_GLOBAL_INTENSITY + 0.1);
+    println("[BIOLIGHT] intensity=" + nf(BIOLIGHT_GLOBAL_INTENSITY, 1, 2));
+  } else if (key == '0') {
+    // Cycle bloom scale
+    BIOLIGHT_BLOOM_SCALE = (BIOLIGHT_BLOOM_SCALE >= 2.0) ? 0.5 : BIOLIGHT_BLOOM_SCALE + 0.25;
+    println("[BIOLIGHT] bloom scale=" + nf(BIOLIGHT_BLOOM_SCALE, 1, 2));
   }
 }
 
@@ -856,7 +881,12 @@ void drawDebugHelp() {
        "  3 cohesion " + (useCohesion ? "ON" : "off"), x, y); y += lh;
   text("4 separation " + (useSeparation ? "ON" : "off") +
        "  5 wander " + (useWander ? "ON" : "off") +
-       "  6 wall avoid " + (useWallAvoid ? "ON" : "off"), x, y);
+       "  6 wall avoid " + (useWallAvoid ? "ON" : "off"), x, y); y += lh;
+  y += 4;
+  text("Bioluminescence:", x, y); y += lh;
+  text("7: glow " + (useBioluminescence ? "ON" : "off") +
+       "  8/9: intensity (" + nf(BIOLIGHT_GLOBAL_INTENSITY, 1, 1) + ")" +
+       "  0: bloom (" + nf(BIOLIGHT_BLOOM_SCALE, 1, 2) + ")", x, y);
   popStyle();
 }
 

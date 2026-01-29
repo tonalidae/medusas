@@ -133,6 +133,7 @@ class Gusano {
   GusanoMood mood;
   GusanoSteering steering;
   GusanoRender render;
+  GusanoBiolight biolight;
 
   Gusano(float x, float y, color c, int id_) {
     segmentos = new ArrayList<Segmento>();
@@ -250,6 +251,7 @@ class Gusano {
     mood = new GusanoMood(this);
     steering = new GusanoSteering(this);
     render = new GusanoRender(this);
+    biolight = new GusanoBiolight(this);
     targetColor = mood.paletteForState(state, moodHeat);
     currentColor = targetColor;
     cycleStartX = x;
@@ -684,6 +686,10 @@ class Gusano {
 
   void dibujarForma() {
     render.dibujarForma();
+  }
+  
+  void dibujarBiolight() {
+    biolight.render();
   }
 
   String stateLabel() {
