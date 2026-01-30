@@ -183,13 +183,13 @@ class Gusano {
     switch(personalityLabel) {
       case "SHY":
         social = random(0.2, 0.5);
-        timidity = random(0.7, 1.0);
-        aggression = random(0.0, 0.2);
-        curiosity = random(0.0, 0.3);
-        // Slower, softer cycles
-        basePulseRate = random(0.18, 0.38);
-        basePulseStrength = random(0.7, 1.2);
-        baseDrag = random(0.90, 0.93);
+        timidity = random(0.55, 0.85);   // narrow gap toward AGG
+        aggression = random(0.1, 0.3);   // give shy a little bite
+        curiosity = random(0.15, 0.35);
+        // Slower, softer cycles (slightly energized)
+        basePulseRate = random(0.20, 0.40);
+        basePulseStrength = random(0.85, 1.40);
+        baseDrag = random(0.89, 0.93);
         break;
       case "AGG":
         social = random(0.1, 0.4);

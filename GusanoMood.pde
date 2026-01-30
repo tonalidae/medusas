@@ -395,14 +395,14 @@ class GusanoMood {
         targetHeadNoise = 1.5;
         break;
       case Gusano.SHY:
-        targetPulseRate = g.basePulseRate * 0.85;
-        targetPulseStrength = g.basePulseStrength * 0.7;
+        targetPulseRate = g.basePulseRate * 0.92;
+        targetPulseStrength = g.basePulseStrength * 0.78;
         targetDrag = g.baseDrag * 1.01;
-        targetSink = g.baseSinkStrength * 1.25;
-        targetTurn = g.baseTurnRate * 1.4;
-        targetFollowScale = 1.1;
-        targetTurbScale = 0.7;
-        targetHeadNoise = 1.3;
+        targetSink = g.baseSinkStrength * 1.18;
+        targetTurn = g.baseTurnRate * 1.35;
+        targetFollowScale = 1.08;
+        targetTurbScale = 0.78;
+        targetHeadNoise = 1.25;
         break;
       case Gusano.FEAR:
         targetPulseRate = g.basePulseRate * 1.8;
