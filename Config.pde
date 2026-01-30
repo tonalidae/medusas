@@ -279,9 +279,19 @@ int lastMoodStatsTotal = 0;
 int lastMoodSummaryFrame = 0;
 
 // --- Render-safe clamp margins (keep full body on screen) ---
+// Base (pixel) safety margins; fallbacks when percentage-based clamps are tiny
 float clampMarginX = 120;
 float clampMarginTop = 80;
 float clampMarginBottom = 260;
+// Percentage-based invisible box (relative to viewport); actual margins are max(pixel, percent*size)
+float clampMarginPctX = 0.08;      // 8% from each side
+float clampMarginTopPct = 0.30;    // keep top 30% clear
+float clampMarginBottomPct = 0.08; // keep bottom 8% clear
+float clampMarginMinX = 80;
+float clampMarginMinTop = 60;
+float clampMarginMinBottom = 140;
+int lastClampWidth = -1;
+int lastClampHeight = -1;
 
 // --- Spatial hash grid (local interactions: Rain World vibe) ---
 HashMap<Long, ArrayList<Gusano>> spatialGrid = new HashMap<Long, ArrayList<Gusano>>();

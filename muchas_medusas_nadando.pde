@@ -6,6 +6,7 @@ import java.util.Map;
 
 void setup() {
   size(1280, 800, P2D);
+  updateClampMargins(); // initialize invisible box once size is known
   // Use a simple per-frame background clear instead of a pre-rendered gradient.
   oscP5 = new OscP5(this, 12000);
 println("[OSC] Listening on port 12000");
@@ -34,6 +35,10 @@ println("[OSC] Listening on port 12000");
 
 void draw() {
   t = millis() * timeScale;
+  // Update invisible box only when viewport size changes (cheap)
+  if (width != lastClampWidth || height != lastClampHeight) {
+    updateClampMargins();
+  }
   decayTapScore(); // keep tapScore time-based
 
   // Clear background each frame (simple deep-sea color)
@@ -218,6 +223,15 @@ void applyUserAffinityDelta(float delta) {
     if (g == null) continue;
     g.adjustAffinity(delta);
   }
+}
+
+// Clamp margins derived from percentages, with pixel minimums for safety.
+void updateClampMargins() {
+  clampMarginX = max(clampMarginMinX, width * clampMarginPctX);
+  clampMarginTop = max(clampMarginMinTop, height * clampMarginTopPct);
+  clampMarginBottom = max(clampMarginMinBottom, height * clampMarginBottomPct);
+  lastClampWidth = width;
+  lastClampHeight = height;
 }
 
 // --- Tap burst -> global mood response ---
