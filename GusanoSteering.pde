@@ -18,7 +18,7 @@ class GusanoSteering {
     if (g.state == Gusano.AGGRESSIVE) {
       // Allow AGGRESSIVE agents to sometimes approach a nearby/still user
       float contractCurve = g.pulseContractCurve(g.pulsePhase);
-      float steerPhaseGate = lerp(0.2, 1.0, contractCurve);
+      float steerPhaseGate = lerp(0.35, 1.0, contractCurve);
 
       float dMouse = dist(cabeza.x, cabeza.y, mouseX, mouseY);
       // If mouse is nearby, mostly still, and this agent has high curiosity, approach
@@ -53,7 +53,7 @@ class GusanoSteering {
     // Jellyfish primarily steer during propulsion phase, not while coasting.
     // Calculate phase gate early so all steering forces can use it.
     float contractCurve = g.pulseContractCurve(g.pulsePhase);
-    float steerPhaseGate = lerp(0.2, 1.0, contractCurve); // Minimal steering during coast
+    float steerPhaseGate = lerp(0.35, 1.0, contractCurve); // Minimal steering during coast
     // Extra drag in heavy water: timid states hesitate more
     if (g.state == Gusano.FEAR || g.state == Gusano.SHY) {
       steerPhaseGate *= 0.65; // damp steering strength so turns feel sluggish
@@ -113,6 +113,30 @@ class GusanoSteering {
           float attract = (CURIOUS_ATTRACT + 0.6 * mem) * steerPhaseGate * friendlyBoost * fearDampen;
           PVector orbit = new PVector(-toMouse.y, toMouse.x).mult(CURIOUS_ORBIT * mem);
           PVector m = PVector.mult(toMouse, attract).add(orbit);
+          // Friendly "dance" around the user to avoid static hovering
+          if (affinity > USER_DANCE_AFFINITY_THR || mem > USER_DANCE_MEM_THR) {
+            g.maybeUpdateDanceRandomness(true);
+            float danceGate = lerp(USER_DANCE_PHASE_MIN, 1.0, contractCurve);
+            float danceRadius = USER_DANCE_RADIUS * g.danceRadiusScale;
+            float danceWeight = constrain(map(dMouse, danceRadius * 0.6, danceRadius * 2.0, 1.0, 0.0), 0, 1);
+            float radial = (dMouse - danceRadius) / max(1.0, danceRadius);
+            PVector radialVec = PVector.mult(toMouse, radial * USER_DANCE_ATTRACT);
+            float spin = (g.id % 2 == 0) ? 1.0 : -1.0;
+            PVector tangent = new PVector(-toMouse.y, toMouse.x);
+            tangent.rotate(g.danceAxisAngle);
+            tangent.mult(USER_DANCE_ORBIT * g.danceOrbitScale * spin);
+            PVector danceOrbit = PVector.add(radialVec, tangent);
+            float danceImpulse = USER_DANCE_IMPULSE * g.danceImpulseScale;
+            danceOrbit.mult(danceGate * danceWeight * (1.0 - USER_DANCE_FIG8_BLEND) * danceImpulse);
+            float phase = t * TWO_PI * USER_DANCE_FIG8_FREQ + g.noiseOffset * 0.6;
+            phase *= spin;
+            PVector danceFig8 = fig8Steer(cabeza.x, cabeza.y, mouseX, mouseY,
+                                          danceRadius, phase, USER_DANCE_FIG8_Y_SCALE,
+                                          danceGate * danceWeight * USER_DANCE_FIG8_BLEND * danceImpulse,
+                                          g.danceAxisAngle);
+            m.add(danceOrbit);
+            m.add(danceFig8);
+          }
           desired.add(m);
           g.debugSteerMouse.set(m);
           g.adjustAffinity(0.0015); // calm proximity builds friendliness
@@ -202,6 +226,42 @@ class GusanoSteering {
     g.debugSteerCoh.set(coh);
     g.debugSteerNeighbors.set(sep.x + coh.x, sep.y + coh.y);
 
+    // --- Buddy dance: orbit and approach to keep pairs moving together ---
+    if (buddy != null) {
+      Segmento bHead = buddy.segmentos.get(0);
+      if (bHead != null) {
+        PVector toBuddy = new PVector(bHead.x - cabeza.x, bHead.y - cabeza.y);
+        float dBuddy = toBuddy.mag();
+        if (dBuddy > 0.0001) {
+          toBuddy.normalize();
+          float danceGate = lerp(BUDDY_DANCE_PHASE_MIN, 1.0, contractCurve);
+          g.maybeUpdateDanceRandomness(true);
+          float danceRadius = BUDDY_DANCE_RADIUS * g.danceRadiusScale;
+          float danceWeight = constrain(map(dBuddy, danceRadius * 0.6, danceRadius * 2.2, 1.0, 0.0), 0, 1);
+          float radial = (dBuddy - danceRadius) / max(1.0, danceRadius);
+          PVector radialVec = PVector.mult(toBuddy, radial * BUDDY_DANCE_ATTRACT);
+          float spin = (g.id % 2 == 0) ? 1.0 : -1.0;
+          PVector tangent = new PVector(-toBuddy.y, toBuddy.x);
+          tangent.rotate(g.danceAxisAngle);
+          tangent.mult(BUDDY_DANCE_ORBIT * g.danceOrbitScale * spin);
+          PVector danceOrbit = PVector.add(radialVec, tangent);
+          float danceImpulse = BUDDY_DANCE_IMPULSE * g.danceImpulseScale;
+          danceOrbit.mult(danceGate * danceWeight * (1.0 - BUDDY_DANCE_FIG8_BLEND) * danceImpulse * BUDDY_LOOP_LEGACY_BLEND);
+          float phase = t * TWO_PI * BUDDY_DANCE_FIG8_FREQ + g.noiseOffset * 0.8;
+          phase *= spin;
+          PVector danceFig8 = fig8Steer(cabeza.x, cabeza.y, bHead.x, bHead.y,
+                                        danceRadius, phase, BUDDY_DANCE_FIG8_Y_SCALE,
+                                        danceGate * danceWeight * BUDDY_DANCE_FIG8_BLEND * danceImpulse * BUDDY_LOOP_LEGACY_BLEND,
+                                        g.danceAxisAngle);
+          desired.add(danceOrbit);
+          desired.add(danceFig8);
+        }
+      }
+      PVector buddyLoop = computeBuddyLoopSteer(cabeza, g, buddy, contractCurve, steerPhaseGate);
+      desired.add(buddyLoop);
+      g.debugSteerBuddyLoop.set(buddyLoop);
+    }
+
     // --- 3b. Shy flee boost when a dominant is nearby ---
     // Flee gets partial phase bypass (survival instinct)
     float fleePhaseGate = lerp(0.5, 1.0, contractCurve);
@@ -271,7 +331,30 @@ class GusanoSteering {
     float glideSteerScale = lerp(1.0, GLIDE_STEER_SCALE, glide01);
     g.debugWanderScale = glideSteerScale;
 
+    // --- 4b. ROAMING PATH (koi-like loops when idle) ---
+    if (useRoamingPaths && g.state != Gusano.AGGRESSIVE) {
+      PVector roam = g.computeRoamSteer(cabeza, glideSteerScale, steerPhaseGate);
+      desired.add(roam);
+      g.debugSteerRoam.set(roam);
+      // When following a path, ease off random wander so arcs stay smooth
+      if (roam.magSq() > 0.0004) {
+        wanderW *= 0.65;
+      }
+    }
+
+    PVector spread = computeSpreadSteer(cabeza, g);
+    desired.add(spread);
+    g.debugSteerSpread.set(spread);
+
+    PVector biome = computeBiomeSteer(cabeza, g, steerPhaseGate);
+    desired.add(biome);
+    g.debugSteerBiome.set(biome);
+
     // --- 5. WANDER (Organic Drift) --- phase-gated via glideSteerScale + steerPhaseGate
+    PVector exploreBias = computeExplorationSteer(cabeza, g);
+    desired.add(exploreBias);
+    g.debugSteerExplore.set(exploreBias);
+
     float nx = noise(g.noiseOffset, t * 0.06) - 0.5;
     float ny = noise(g.noiseOffset + 500, t * 0.06) - 0.5;
     PVector wander = new PVector(nx, ny).mult(wanderW * glideSteerScale * steerPhaseGate);
@@ -304,7 +387,130 @@ class GusanoSteering {
     g.debugSteerNeighbors.set(0, 0);
     g.debugSteerWander.set(0, 0);
     g.debugSteerSway.set(0, 0);
+    g.debugSteerExplore.set(0, 0);
     g.debugSteerAggro.set(0, 0);
+    g.debugSteerRoam.set(0, 0);
+    g.debugSteerSpread.set(0, 0);
+    g.debugSteerBiome.set(0, 0);
+    g.debugSteerBuddyLoop.set(0, 0);
+  }
+
+  PVector fig8Offset(float radius, float phase, float yScale, float axisAngle) {
+    float ox = cos(phase) * radius;
+    float oy = sin(phase) * cos(phase) * radius * yScale;
+    float cosA = cos(axisAngle);
+    float sinA = sin(axisAngle);
+    float rx = ox * cosA - oy * sinA;
+    float ry = ox * sinA + oy * cosA;
+    return new PVector(rx, ry);
+  }
+
+  PVector fig8Steer(float headX, float headY, float centerX, float centerY,
+                    float radius, float phase, float yScale, float weight, float axisAngle) {
+    PVector offset = fig8Offset(radius, phase, yScale, axisAngle);
+    float tx = centerX + offset.x;
+    float ty = centerY + offset.y;
+    PVector toTarget = new PVector(tx - headX, ty - headY);
+    float d = toTarget.mag();
+    if (d < 0.0001) return new PVector(0, 0);
+    toTarget.normalize();
+    float falloff = constrain(map(d, radius * 0.4, radius * 2.5, 1.0, 0.0), 0, 1);
+    toTarget.mult(weight * falloff);
+    return toTarget;
+  }
+
+  PVector computeBuddyLoopSteer(Segmento cabeza, Gusano g, Gusano buddy, float contractCurve, float steerPhaseGate) {
+    if (buddy == null) return new PVector(0, 0);
+    Segmento bHead = buddy.segmentos.get(0);
+    if (bHead == null) return new PVector(0, 0);
+    float centerX = (cabeza.x + bHead.x) * 0.5;
+    float centerY = (cabeza.y + bHead.y) * 0.5;
+    float radiusScale = (g.danceRadiusScale + buddy.danceRadiusScale) * 0.5;
+    float radius = BUDDY_LOOP_RADIUS * radiusScale;
+    if (radius <= 0) return new PVector(0, 0);
+    float basePhase = t * TWO_PI * BUDDY_LOOP_FREQ + g.noiseOffset * BUDDY_LOOP_NOISE_FREQ;
+    float phaseOffset = (g.id % 2 == 0) ? 0 : PI;
+    float phase = basePhase + phaseOffset;
+    float axis = (g.danceAxisAngle + buddy.danceAxisAngle) * 0.5;
+    PVector offset = fig8Offset(radius, phase, BUDDY_LOOP_Y_SCALE, axis);
+    float tx = centerX + offset.x;
+    float ty = centerY + offset.y;
+    PVector toTarget = new PVector(tx - cabeza.x, ty - cabeza.y);
+    float dist = toTarget.mag();
+    if (dist < 0.0001) return new PVector(0, 0);
+    toTarget.normalize();
+    float falloff = constrain(map(dist, radius * 0.2, radius * 1.8, 0.6, 1.0), 0.35, 1.0);
+    float strength = BUDDY_LOOP_STRENGTH * falloff * steerPhaseGate * lerp(0.65, 1.0, contractCurve);
+    toTarget.mult(strength);
+    return toTarget;
+  }
+
+  PVector computeExplorationSteer(Segmento cabeza, Gusano g) {
+    int cx = floor(cabeza.x / gridCellSize);
+    int cy = floor(cabeza.y / gridCellSize);
+    long homeKey = cellKey(cx, cy);
+    int homeCount = 0;
+    ArrayList<Gusano> homeBucket = spatialGrid.get(homeKey);
+    if (homeBucket != null) {
+      homeCount = max(0, homeBucket.size() - 1);
+    }
+
+    float bestCount = 1e6;
+    PVector bestCenter = null;
+    for (int oy = -1; oy <= 1; oy++) {
+      for (int ox = -1; ox <= 1; ox++) {
+        long key = cellKey(cx + ox, cy + oy);
+        ArrayList<Gusano> bucket = spatialGrid.get(key);
+        int count = (bucket == null) ? 0 : bucket.size();
+        if (bucket != null && bucket.contains(g)) count = max(0, count - 1);
+        if (bestCenter == null || count < bestCount) {
+          bestCount = count;
+          float tx = (cx + ox + 0.5) * gridCellSize;
+          float ty = (cy + oy + 0.5) * gridCellSize;
+          tx = constrain(tx, clampMarginX, width - clampMarginX);
+          ty = constrain(ty, clampMarginTop, height - clampMarginBottom);
+          bestCenter = new PVector(tx, ty);
+        }
+      }
+    }
+
+    if (bestCenter == null) return new PVector(0, 0);
+    PVector toTarget = new PVector(bestCenter.x - cabeza.x, bestCenter.y - cabeza.y);
+    float distSq = toTarget.magSq();
+    if (distSq < 1e-4) return new PVector(0, 0);
+
+    float emptiness = max(0.1, 1.0 - min(bestCount, EXPLORATION_OCCUPANCY_SCALE) / EXPLORATION_OCCUPANCY_SCALE);
+    float crowd = min(1.0, homeCount / EXPLORATION_OCCUPANCY_SCALE);
+    float intensity = EXPLORATION_WEIGHT * (0.35 + crowd * 0.65) * emptiness;
+
+    toTarget.normalize();
+    toTarget.mult(intensity);
+    return toTarget;
+  }
+
+  PVector computeSpreadSteer(Segmento cabeza, Gusano g) {
+    float dx = cabeza.x - swarmCentroidX;
+    float dy = cabeza.y - swarmCentroidY;
+    float dist = sqrt(dx * dx + dy * dy);
+    float radius = max(1.0, SWARM_SPREAD_RADIUS);
+    if (dist > radius || radius <= 0) return new PVector(0, 0);
+    float strength = (1.0 - dist / radius) * SWARM_SPREAD_STRENGTH;
+    PVector out = new PVector(dx, dy);
+    if (dist > 0.0001) out.normalize();
+    out.mult(strength);
+    return out;
+  }
+
+  PVector computeBiomeSteer(Segmento cabeza, Gusano g, float steerPhaseGate) {
+    if (g.biomeTarget == null) return new PVector(0, 0);
+    PVector toTarget = new PVector(g.biomeTarget.x - cabeza.x, g.biomeTarget.y - cabeza.y);
+    float d = toTarget.mag();
+    if (d < 1e-4) return new PVector(0, 0);
+    toTarget.normalize();
+    float fearDampen = (g.state == Gusano.FEAR) ? BIOME_AVOID_FEAR_SCALE : 1.0;
+    float w = BIOME_STEER_WEIGHT * steerPhaseGate * fearDampen;
+    toTarget.mult(w);
+    return toTarget;
   }
 
   PVector computeAggroPursuit(Segmento cabeza) {

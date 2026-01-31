@@ -4,6 +4,16 @@ import java.util.Map;
 
 // Configuration moved to Config.pde
 
+// Convert per-slot arm energy into a wake strength multiplier
+float armWakeScaleForHand(int h) {
+  if (h < 0 || h >= handArmEnergySmoothed.length) return 1.0;
+  float e = handArmEnergySmoothed[h];
+  // If no arm-energy has been provided (legacy hand tracker), stay neutral.
+  if (e <= 0) return 1.0;
+  float s = map(e, ARM_ENERGY_MIN, ARM_ENERGY_MAX, ARM_WAKE_MIN, ARM_WAKE_MAX);
+  return constrain(s, ARM_WAKE_MIN, ARM_WAKE_MAX);
+}
+
 void setup() {
   size(1280, 800, P2D);
   updateClampMargins(); // initialize invisible box once size is known
@@ -109,11 +119,16 @@ void draw() {
       prevHandPoints[i] = null;
       prevHandDepth[i] = 0;
     }
+    for(int h=0; h<MAX_HANDS; h++) {
+      handSizes[h] = 0;
+      handArmEnergy[h] = 0;
+      handArmEnergySmoothed[h] = 0;
+    }
   }
 
-  // 2. Mouse Fallback (Only works if no hand is detected)
+  // 2. Mouse Fallback (Only works if no OSC hand is detected, or override)
   // This lets you test with mouse when the camera isn't running
-  if (!handPresent && (mousePressed || mouseSpeed > 12)) {
+  if (!handPresent && (mousePressed || mouseSpeed > 12) && !preferOSCHands) {
     depositWakeBlob(mouseX, mouseY, 70, userDeposit);
   }
 
@@ -389,7 +404,7 @@ void reiniciarGusanos() {
   gusanos.clear();
   for (int i = 0; i < numGusanos; i++) {
     float x = random(200, width-200);
-    float y = random(200, height-200);
+    float y = random(height * 0.45, height-200); // spawn lower to match user interaction zone
     color c = color(0, 66); // Todos los gusanos son negros
     gusanos.add(new Gusano(x, y, c, i));
   }
@@ -676,13 +691,30 @@ void decayMoodGrid() {
 }
 
 void rebuildSpatialGrid() {
-  spatialGrid.clear();
   if (gusanos == null) return;
+  boolean needsRebuild = spatialGrid.isEmpty();
+  if (!needsRebuild) {
+    for (Gusano g : gusanos) {
+      if (g == null || g.segmentos == null || g.segmentos.size() == 0) continue;
+      Segmento h = g.segmentos.get(0);
+      int cx = floor(h.x / gridCellSize);
+      int cy = floor(h.y / gridCellSize);
+      if (cx != g.lastCellX || cy != g.lastCellY) {
+        needsRebuild = true;
+        break;
+      }
+    }
+  }
+  if (!needsRebuild) return;
+
+  spatialGrid.clear();
   for (Gusano g : gusanos) {
     if (g == null || g.segmentos == null || g.segmentos.size() == 0) continue;
     Segmento h = g.segmentos.get(0);
     int cx = floor(h.x / gridCellSize);
     int cy = floor(h.y / gridCellSize);
+    g.lastCellX = cx;
+    g.lastCellY = cy;
     long key = cellKey(cx, cy);
     ArrayList<Gusano> bucket = spatialGrid.get(key);
     if (bucket == null) {
@@ -1158,6 +1190,7 @@ void processHandSamples(int[] slots, float[] xs, float[] ys, float[] zs, boolean
     float prevX = prev.x;
     float prevY = prev.y;
     float speed = dist(x, y, prevX, prevY);
+    float wakeScale = armWakeScaleForHand(h);
     if (handNear && speed > 2.0) {
       float radius = map(speed, 0, 60, 25, 65);
       float force = map(speed, 0, 60, 0.5, 2.5);
@@ -1167,7 +1200,7 @@ void processHandSamples(int[] slots, float[] xs, float[] ys, float[] zs, boolean
         depthScale = constrain(map(farther, -0.3, 0.3, 1.8, 0.6), 0.4, 2.5);
         radius *= map(depthScale, 0.4, 2.5, 0.8, 1.4);
       }
-      depositWakeBlob(x, y, radius, userDeposit * 0.4 * force * depthScale);
+      depositWakeBlob(x, y, radius, userDeposit * 0.4 * force * depthScale * wakeScale);
     }
 
     prevHandPoints[pointIndex].set(x, y);
@@ -1196,6 +1229,8 @@ void processHandSamples(int[] slots, float[] xs, float[] ys, float[] zs, boolean
       prevHandPoints[pointIndex] = null;
       prevHandDepth[pointIndex] = 0;
       handSizes[h] = 0;
+      handArmEnergy[h] = 0;
+      handArmEnergySmoothed[h] = 0;
     }
   }
   for (int j = 0; j < prevHandPoints.length; j++) {
@@ -1224,6 +1259,7 @@ void processHandSamples(int[] slots, float[] xs, float[] ys, float[] zs, boolean
   boolean launchMove = wasEngaged && primarySet && primarySpeed >= HAND_RELEASE_WAKE_SPEED;
   boolean harshPressMove = handEngaged && primarySet && primarySpeed >= HAND_FEAR_SPEED && !stableDepth;
   int engagedHand = handEngaged ? primaryHand : -1;
+  float primaryWakeScale = armWakeScaleForHand(primaryHand);
 
   if (handNear && primarySet && primarySpeed < HAND_STILL_SPEED && stableDepth) {
     handStillMs += dtMs;
@@ -1283,7 +1319,7 @@ void processHandSamples(int[] slots, float[] xs, float[] ys, float[] zs, boolean
 
   if (handEngaged && primarySet) {
     float pressRadius = map(handProximitySmoothed, 0, 1, 35, 70);
-    depositWakeBlob(primaryX, primaryY, pressRadius, userDeposit * 1.1);
+    depositWakeBlob(primaryX, primaryY, pressRadius, userDeposit * 1.1 * primaryWakeScale);
   }
 
   if (handEngaged && primarySet && primaryHadPrev && stableDepth && primarySpeed > 2.0) {
@@ -1293,7 +1329,7 @@ void processHandSamples(int[] slots, float[] xs, float[] ys, float[] zs, boolean
       float px = lerp(primaryPrevX, primaryX, t);
       float py = lerp(primaryPrevY, primaryY, t);
       float radius = lerp(40, 65, t);
-      depositWakeBlob(px, py, radius, userDeposit);
+      depositWakeBlob(px, py, radius, userDeposit * primaryWakeScale);
     }
   }
 
@@ -1303,7 +1339,7 @@ void processHandSamples(int[] slots, float[] xs, float[] ys, float[] zs, boolean
       float px = lerp(primaryPrevX, primaryX, t);
       float py = lerp(primaryPrevY, primaryY, t);
       float radius = lerp(45, 70, t);
-      depositWakeBlob(px, py, radius, userDeposit * HAND_RELEASE_WAKE_MULT);
+      depositWakeBlob(px, py, radius, userDeposit * HAND_RELEASE_WAKE_MULT * primaryWakeScale);
     }
   }
 
@@ -1342,6 +1378,23 @@ void oscEvent(OscMessage msg) {
       int n = min(MAX_HANDS, args.length);
       for (int i = 0; i < n; i++) {
         handSizes[i] = msg.get(i).floatValue();
+      }
+      for (int i = n; i < MAX_HANDS; i++) {
+        handSizes[i] = 0;
+      }
+    }
+  } else if (msg.checkAddrPattern("/arm_energy")) {
+    Object[] args = msg.arguments();
+    if (args != null) {
+      int n = min(MAX_HANDS, args.length);
+      for (int i = 0; i < n; i++) {
+        float raw = msg.get(i).floatValue();
+        handArmEnergy[i] = raw;
+        handArmEnergySmoothed[i] = lerp(handArmEnergySmoothed[i], raw, ARM_ENERGY_SMOOTH_ALPHA);
+      }
+      for (int i = n; i < MAX_HANDS; i++) {
+        handArmEnergy[i] = 0;
+        handArmEnergySmoothed[i] = lerp(handArmEnergySmoothed[i], 0, ARM_ENERGY_SMOOTH_ALPHA);
       }
     }
   } else if (msg.checkAddrPattern("/hands")) {

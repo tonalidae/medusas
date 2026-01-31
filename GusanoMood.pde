@@ -135,6 +135,7 @@ class GusanoMood {
       g.fieldCalm = 0;
     }
     float fieldFear = g.fieldFear;
+    float fieldCalm = g.fieldCalm;
     float wallProx = wallProximity(head, 100);
 
     // --- Mood Stabilizer (isolated; does not change core logic) ---
@@ -160,7 +161,9 @@ class GusanoMood {
     if (g.debugSpikeThreshold > 0.0001) {
       threatRaw = constrain(g.debugSpeedDelta / g.debugSpikeThreshold, 0, 2);
     }
-    threatRaw += fieldFear * 0.6;
+    threatRaw += fieldFear * 0.9;
+    threatRaw -= fieldCalm * 0.35;
+    threatRaw = max(0, threatRaw);
     float curiosityRaw = g.curiosity;
 
     g.smoothedThreat = lerp(g.smoothedThreat, threatRaw, MOOD_EMA_ALPHA);
@@ -178,7 +181,7 @@ class GusanoMood {
                              g.debugVmagNow < 0.6 * g.maxSpeed &&
                              millis() > 3000 &&
                              g.postFearTimer <= 0;
-    boolean randomFear = randomEligible && random(1) < 0.00005;
+    boolean randomFear = randomEligible && random(1) < 0.000015;
     boolean startle = speedSpike || randomFear;
     if (fieldFearStartle) startle = true;
     if (startle && g.state != Gusano.FEAR && g.stateCooldown <= 0 && g.fearCooldownFrames <= 0) {
@@ -230,14 +233,12 @@ class GusanoMood {
     }
 
     boolean allowed = true;
-    String blockReason = "";
     int cooldownLeft = 0;
 
     if (STABILIZE_MOOD && !force) {
       int since = frameCount - g.lastMoodChangeFrame;
       if (since < MOOD_COOLDOWN_FRAMES) {
         allowed = false;
-        blockReason = "cooldown";
         cooldownLeft = MOOD_COOLDOWN_FRAMES - since;
       }
 
@@ -249,17 +250,14 @@ class GusanoMood {
       }
       if (allowed && g.moodCandidateFrames < MOOD_DWELL_FRAMES) {
         allowed = false;
-        blockReason = "dwell";
       }
 
       if (allowed && (proposed == Gusano.AGGRESSIVE || g.state == Gusano.AGGRESSIVE)) {
         float aggScore = g.aggression;
         if (g.state != Gusano.AGGRESSIVE && aggScore < AGG_ENTER_THR) {
           allowed = false;
-          blockReason = "agg_hyst_enter";
         } else if (g.state == Gusano.AGGRESSIVE && aggScore > AGG_EXIT_THR) {
           allowed = false;
-          blockReason = "agg_hyst_exit";
         }
       }
 
@@ -267,10 +265,8 @@ class GusanoMood {
         float shyScore = g.timidity;
         if (g.state != Gusano.SHY && shyScore < SHY_ENTER_THR) {
           allowed = false;
-          blockReason = "shy_hyst_enter";
         } else if (g.state == Gusano.SHY && shyScore > SHY_EXIT_THR) {
           allowed = false;
-          blockReason = "shy_hyst_exit";
         }
       }
 
@@ -280,12 +276,10 @@ class GusanoMood {
         if (g.baseMood == Gusano.SHY && proposed == Gusano.AGGRESSIVE) {
           if (gateThreat < 0.8) {
             allowed = false;
-            blockReason = "persona_gate_shy";
           }
         } else if (g.baseMood == Gusano.AGGRESSIVE && proposed == Gusano.SHY) {
           if (gateThreat > 0.2) {
             allowed = false;
-            blockReason = "persona_gate_agg";
           }
         }
       }
@@ -438,13 +432,14 @@ class GusanoMood {
       }
     }
 
-    targetPulseRate = g.basePulseRate + (targetPulseRate - g.basePulseRate) * moodStrength;
+    // Apply slow personal drift scales to keep individuals unique
+    targetPulseRate = g.basePulseRate * g.driftPulseScale + (targetPulseRate - g.basePulseRate) * moodStrength;
     targetPulseStrength = g.basePulseStrength + (targetPulseStrength - g.basePulseStrength) * moodStrength;
-    targetDrag = g.baseDrag + (targetDrag - g.baseDrag) * moodStrength;
+    targetDrag = g.baseDrag * g.driftDragScale + (targetDrag - g.baseDrag) * moodStrength;
     targetSink = g.baseSinkStrength + (targetSink - g.baseSinkStrength) * moodStrength;
     targetTurn = g.baseTurnRate + (targetTurn - g.baseTurnRate) * moodStrength;
     targetFollowScale = 1.0 + (targetFollowScale - 1.0) * moodStrength;
-    targetTurbScale = 1.0 + (targetTurbScale - 1.0) * moodStrength;
+    targetTurbScale = (1.0 + (targetTurbScale - 1.0) * moodStrength) * g.driftWanderScale;
     targetHeadNoise = 1.0 + (targetHeadNoise - 1.0) * moodStrength;
 
     // Fatigue influence
@@ -508,6 +503,9 @@ class GusanoMood {
       default:
         base = color(120);
         break;
+    }
+    if (g.ecosystemTint != 0) {
+      base = lerpColor(base, g.ecosystemTint, 0.24);
     }
     // Intensity drives brightness/saturation bump
     float boost = constrain(intensity, 0.6, 1.5);
