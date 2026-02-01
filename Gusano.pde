@@ -110,7 +110,12 @@ class Gusano {
   PVector debugSteerNeighbors = new PVector(0, 0);
   PVector debugSteerWander = new PVector(0, 0);
   PVector debugSteerSway = new PVector(0, 0);
+  PVector debugSteerExplore = new PVector(0, 0);
   PVector debugSteerAggro = new PVector(0, 0);
+  PVector debugSteerRoam = new PVector(0, 0);
+  PVector debugSteerSpread = new PVector(0, 0);
+  PVector debugSteerBiome = new PVector(0, 0);
+  PVector debugSteerBuddyLoop = new PVector(0, 0);
   int prevMood = -1;
   int lastMoodChangeFrame = 0;
   float smoothedThreat = 0;
@@ -137,6 +142,38 @@ class Gusano {
   GusanoSteering steering;
   GusanoRender render;
   GusanoBiolight biolight;
+  // Ecosystem variety traits
+  int ecosystemProfile = 0;
+  color ecosystemTint = 0;
+  float ecosystemSpeedScale = 1.0;
+  float ecosystemCuriosityBoost = 0;
+  float ecosystemEdgeBias = 0;
+  float ecosystemVerticalBias = 0;
+  int lastCellX = -9999;
+  int lastCellY = -9999;
+  // Roaming path state (koi-like loops)
+  PVector roamCenter = new PVector(0, 0);
+  float roamRadius = 200;
+  float roamAngle = 0;
+  float roamAngVel = 0.02;
+  boolean roamFigureEight = false;
+  float dtNormCurrent = 1.0; // cached dt*60 for steering use
+  boolean roamActive = false;
+  float roamMagLast = 0;
+  float danceAxisAngle = 0;
+  int nextDanceAxisChangeMs = 0;
+  float danceRadiusScale = 1.0;
+  float danceOrbitScale = 1.0;
+  float danceImpulseScale = 1.0;
+  // Long-horizon biome roaming
+  PVector biomeTarget = new PVector(0, 0);
+  int nextBiomeRetargetMs = 0;
+  HashMap<Long, Float> biomeAffinity = new HashMap<Long, Float>();
+  // Slow personal parameter drift
+  float driftPhase = 0;
+  float driftPulseScale = 1.0;
+  float driftDragScale = 1.0;
+  float driftWanderScale = 1.0;
 
   Gusano(float x, float y, color c, int id_) {
     segmentos = new ArrayList<Segmento>();
@@ -157,14 +194,25 @@ class Gusano {
     pulsePhase = pulsePhase % 1.0;
     
     // Organic pulse variation: each jellyfish has unique timing irregularities
-    contractPortion = random(0.20, 0.30); // Individual contraction timing
-    holdPortion = random(0.08, 0.15); // Individual hold duration
+    contractPortion = random(0.24, 0.34); // Individual contraction timing
+    holdPortion = random(0.05, 0.10); // Individual hold duration
 
     // Personality base values (some of these are set after label is chosen)
     baseSinkStrength = random(0.04, 0.10);
-    baseTurnRate = random(0.045, 0.085); // Higher turn rate for curves
+    baseTurnRate = random(0.060, 0.110); // Higher turn rate for curves
     baseTurbulence = random(0.9, 1.2);
     sizeFactor = random(0.85, 1.15);
+    ecosystemProfile = (ECOSYSTEM_PROFILE_COUNT > 0) ? int(random(ECOSYSTEM_PROFILE_COUNT)) : 0;
+    int safeProfile = max(0, min(ECOSYSTEM_PROFILE_COUNT - 1, ecosystemProfile));
+    ecosystemTint = ECOSYSTEM_TINTS[safeProfile];
+    ecosystemSpeedScale = ECOSYSTEM_SPEED_MOD[safeProfile];
+    ecosystemCuriosityBoost = ECOSYSTEM_CURIOSITY_BOOST[safeProfile];
+    ecosystemEdgeBias = ECOSYSTEM_EDGE_WEIGHT[safeProfile];
+    ecosystemVerticalBias = ECOSYSTEM_VERTICAL_BIAS[safeProfile];
+    float sizeMod = ECOSYSTEM_SIZE_MOD[safeProfile];
+    sizeFactor = constrain(sizeFactor * sizeMod, 0.65, 1.45);
+    curiosity = constrain(curiosity + ecosystemCuriosityBoost, 0, 1);
+    maxSpeed = 14.0 * ecosystemSpeedScale;
 
     // Personality archetype (stable baseline)
     float pr = random(1);
@@ -210,7 +258,7 @@ class Gusano {
         basePulseRate = random(0.20, 0.42);
         basePulseStrength = random(0.9, 1.4);
         baseDrag = random(0.88, 0.92);
-        baseTurnRate = random(0.060, 0.100);
+        baseTurnRate = random(0.075, 0.120);
         baseSinkStrength = random(0.05, 0.10);
         baseTurbulence = random(1.0, 1.2);
         break;
@@ -223,7 +271,7 @@ class Gusano {
         basePulseRate = random(0.16, 0.32);
         basePulseStrength = random(0.7, 1.1);
         baseDrag = random(0.82, 0.88); // glidier
-        baseTurnRate = random(0.035, 0.070);
+        baseTurnRate = random(0.050, 0.095);
         baseSinkStrength = random(0.03, 0.07);
         baseTurbulence = random(0.85, 1.05);
         break;
@@ -261,6 +309,101 @@ class Gusano {
     cycleStartX = x;
     cycleStartY = y;
     cycleStartMs = millis();
+    initRoamPath(x, y);
+    danceAxisAngle = random(TWO_PI);
+    nextDanceAxisChangeMs = millis() + int(random(DANCE_AXIS_MIN_INTERVAL_MS, DANCE_AXIS_MAX_INTERVAL_MS));
+    biomeTarget.set(random(width), random(height));
+    nextBiomeRetargetMs = millis() + int(random(BIOME_TARGET_INTERVAL_MIN_MS, BIOME_TARGET_INTERVAL_MAX_MS));
+  }
+
+  void initRoamPath(float x, float y) {
+    float margin = ROAM_CENTER_MARGIN;
+    roamCenter.set(
+      constrain(x, margin, width - margin),
+      constrain(y, margin, height - margin)
+    );
+    float verticalSpan = height - clampMarginTop - clampMarginBottom;
+    roamCenter.y = constrain(
+      lerp(roamCenter.y, GLOBAL_VERTICAL_TARGET * height, GLOBAL_VERTICAL_PULL) +
+      ecosystemVerticalBias * verticalSpan * 0.25,
+      clampMarginTop, height - clampMarginBottom);
+    float horizontalSpan = width - clampMarginX - clampMarginX;
+    roamCenter.x = constrain(roamCenter.x + ecosystemEdgeBias * horizontalSpan * 0.25,
+                              clampMarginX, width - clampMarginX);
+    roamRadius = random(ROAM_RADIUS_MIN, ROAM_RADIUS_MAX);
+    roamAngle = random(TWO_PI);
+    float sign = random(1) < 0.5 ? -1 : 1;
+    roamAngVel = sign * random(ROAM_ANG_VEL_MIN, ROAM_ANG_VEL_MAX);
+    roamFigureEight = random(1) < 0.35;
+  }
+
+  void maybeUpdateDanceRandomness(boolean dancing) {
+    if (!dancing) return;
+    int now = millis();
+    if (now < nextDanceAxisChangeMs) return;
+    nextDanceAxisChangeMs = now + int(random(DANCE_AXIS_MIN_INTERVAL_MS, DANCE_AXIS_MAX_INTERVAL_MS));
+    if (random(1) < DANCE_AXIS_CHANGE_PROB) {
+      danceAxisAngle = random(TWO_PI);
+      danceRadiusScale = 1.0 + random(-DANCE_RADIUS_JITTER, DANCE_RADIUS_JITTER);
+      danceOrbitScale = 1.0 + random(-DANCE_ORBIT_JITTER, DANCE_ORBIT_JITTER);
+      danceImpulseScale = constrain(1.0 + random(-DANCE_IMPULSE_JITTER, DANCE_IMPULSE_JITTER), 0.6, 1.4);
+    }
+  }
+
+  void maybeRetargetBiome(int nowMs) {
+    if (nowMs < nextBiomeRetargetMs) return;
+    nextBiomeRetargetMs = nowMs + int(random(BIOME_TARGET_INTERVAL_MIN_MS, BIOME_TARGET_INTERVAL_MAX_MS));
+    // Edge-biased random point
+    float edgeBiasProfile = constrain(BIOME_EDGE_BIAS + ecosystemEdgeBias * 0.4, 0, 0.95);
+    float edgeChance = edgeBiasProfile;
+    float tx = random(width);
+    float ty = random(height);
+    ty = lerp(ty, GLOBAL_VERTICAL_TARGET * height, GLOBAL_VERTICAL_PULL);
+    if (random(1) < edgeChance) {
+      tx = (random(1) < 0.5) ? random(clampMarginX) : random(width - clampMarginX, width);
+      ty = (random(1) < 0.5) ? random(clampMarginTop) : random(height - clampMarginBottom, height);
+    }
+    float verticalSpan = height - clampMarginTop - clampMarginBottom;
+    ty = constrain(ty + ecosystemVerticalBias * verticalSpan * 0.25, clampMarginTop, height - clampMarginBottom);
+    // Bias toward lowest-affinity cell nearby
+    int cx = floor(tx / gridCellSize);
+    int cy = floor(ty / gridCellSize);
+    float bestScore = 1e9;
+    for (int oy = -1; oy <= 1; oy++) {
+      for (int ox = -1; ox <= 1; ox++) {
+        long key = cellKey(cx + ox, cy + oy);
+        float aff = biomeAffinity.containsKey(key) ? biomeAffinity.get(key) : 0;
+        if (aff < bestScore) {
+          bestScore = aff;
+          biomeTarget.set((cx + ox + 0.5) * gridCellSize, (cy + oy + 0.5) * gridCellSize);
+        }
+      }
+    }
+    biomeTarget.x = constrain(biomeTarget.x, clampMarginX, width - clampMarginX);
+    biomeTarget.y = constrain(biomeTarget.y, clampMarginTop, height - clampMarginBottom);
+    // Avoid re-picking too close
+    if (dist(biomeTarget.x, biomeTarget.y, segmentos.get(0).x, segmentos.get(0).y) < BIOME_MIN_DIST) {
+      biomeTarget.x = width - biomeTarget.x;
+      biomeTarget.y = height - biomeTarget.y;
+    }
+  }
+
+  void updateBiomeAffinity(float dt) {
+    long key = cellKey(floor(segmentos.get(0).x / gridCellSize),
+                       floor(segmentos.get(0).y / gridCellSize));
+    float val = biomeAffinity.containsKey(key) ? biomeAffinity.get(key) : 0;
+    float delta = 0;
+    if (state == CALM || state == CURIOUS) delta += BIOME_LIKE_RATE * dt * 60.0;
+    if (state == FEAR) delta -= BIOME_AVOID_RATE * dt * 60.0;
+    val = (val + delta) * BIOME_DECAY;
+    biomeAffinity.put(key, val);
+  }
+
+  void updateDrift(float dt) {
+    driftPhase += DRIFT_SPEED * TWO_PI * dt;
+    driftPulseScale = 1.0 + sin(driftPhase + noiseOffset) * DRIFT_PULSE_MAG;
+    driftDragScale = 1.0 + sin(driftPhase * 0.8 + noiseOffset * 1.3) * DRIFT_DRAG_MAG;
+    driftWanderScale = 1.0 + sin(driftPhase * 1.2 + noiseOffset * 2.1) * DRIFT_WANDER_MAG;
   }
 
   void adjustAffinity(float delta) {
@@ -276,6 +419,7 @@ class Gusano {
     // Startup / low-FPS safety: prevent huge impulses when frameRate is small
     dt = constrain(dt, 1.0/120.0, 1.0/20.0);
     float dtNorm = dt * 60.0;
+    dtNormCurrent = dtNorm;
     int nowMs = millis();
     if (affinityLastMs < 0) affinityLastMs = nowMs;
     int dtMsAffinity = max(1, nowMs - affinityLastMs);
@@ -351,6 +495,11 @@ class Gusano {
       }
     }
 
+    nowMs = millis();
+    maybeRetargetBiome(nowMs);
+    updateBiomeAffinity(dt);
+    updateDrift(dt);
+
     float preContractCurve = pulseContractCurve(pulsePhase);
     float glide01Pre = 1.0 - preContractCurve;
     float headGlideScale = lerp(1.0, GLIDE_HEAD_NOISE_SCALE, glide01Pre);
@@ -402,6 +551,9 @@ class Gusano {
     headAngle = lerpAngle(headAngle, limitedAngle, turnRate);
 
     float maxSpeedEff = maxSpeed * (0.7 + ENERGY_MAXSPEED_SCALE * energy); // tired -> lower cap
+    if (roamActive && useRoamingPaths && state != FEAR && state != AGGRESSIVE) {
+      maxSpeedEff *= ROAM_SPEED_BOOST;
+    }
     float speed01 = constrain(vmagNow / maxSpeedEff, 0, 1);
     float thrustScale = constrain(1.0 - speed01, 0.15, 1.0);
 
@@ -467,7 +619,7 @@ class Gusano {
       float alignment = PVector.dot(headingVec, steerDir);
       // Only allow full thrust when reasonably aligned (>~30° from target)
       // Smoothly reduce thrust as misalignment increases
-      alignmentGate = constrain(map(alignment, 0.3, 0.9, 0.15, 1.0), 0.15, 1.0);
+      alignmentGate = constrain(map(alignment, 0.2, 0.9, 0.25, 1.0), 0.25, 1.0);
     }
     
     // Breathing variation: strength varies slowly over time like breathing rhythm
@@ -501,6 +653,9 @@ class Gusano {
     vel.y -= buoyancyLift * contraction * dtNorm;
 
     float dragPhaseScale = lerp(DRAG_RELAX_SCALE, DRAG_CONTRACT_SCALE, contractCurve);
+    if (roamActive && useRoamingPaths && state != FEAR && state != AGGRESSIVE) {
+      dragPhaseScale *= ROAM_DRAG_REDUCE;
+    }
     vel.mult(drag * dragPhaseScale);
 
     // === BIOLOGICAL CONSTRAINT: Soft-Body Wall Response ===
@@ -578,7 +733,7 @@ class Gusano {
     }
 
     // Deadband: stop tiny residual velocities from looking like nervous twitching
-    if (vel.magSq() < 0.0004) { // ~0.02^2
+    if (vel.magSq() < 0.00025) { // ~0.016^2
       vel.set(0, 0);
     }
 
@@ -671,6 +826,69 @@ class Gusano {
       float deposit = wakeDeposit * depositGate * (0.6 + vmag * 0.25);
       depositWakePoint(cabeza.x, cabeza.y, deposit);
     }
+  }
+
+  // --- Roaming path helper: koi-like drifting loops across the tank ---
+  PVector computeRoamSteer(Segmento cabeza, float glideSteerScale, float steerPhaseGate) {
+    PVector zero = new PVector(0, 0);
+    roamActive = false;
+    roamMagLast = 0;
+    if (!useRoamingPaths) return zero;
+
+    // Advance angular position using current timestep
+    float dtNorm = max(0.0001, dtNormCurrent);
+    roamAngle += roamAngVel * dtNorm;
+    if (roamAngle > TWO_PI) roamAngle -= TWO_PI;
+    if (roamAngle < 0) roamAngle += TWO_PI;
+
+    // Slowly drift the center with low-frequency noise so paths explore the space
+    float nx = noise(noiseOffset * 0.7, t * ROAM_CENTER_FREQ) - 0.5;
+    float ny = noise(noiseOffset * 1.1, t * ROAM_CENTER_FREQ) - 0.5;
+    float margin = ROAM_CENTER_MARGIN;
+    float cx = width * 0.5 + nx * (width * 0.5 - margin);
+    float cy = height * 0.5 + ny * (height * 0.5 - margin);
+    roamCenter.set(cx, cy);
+
+    // Radius modulation for soft figure-eight wobble
+    float rMod = roamFigureEight ? (1.0 + ROAM_RADIUS_JITTER * sin(roamAngle * 2.0)) : 1.0;
+    float r = roamRadius * rMod;
+    float tx = cx + cos(roamAngle) * r;
+    float ty = cy + sin(roamAngle) * r;
+
+    PVector toTarget = new PVector(tx - cabeza.x, ty - cabeza.y);
+    float d = toTarget.mag();
+    if (d < 0.0001) return zero;
+    toTarget.normalize();
+
+    // Tangential bias keeps motion flowing around the path instead of stop-start
+    PVector tangent = new PVector(-toTarget.y, toTarget.x);
+    tangent.normalize();
+
+    // If we've drifted far from the path center, gently pull inward
+    PVector toCenter = new PVector(cx - cabeza.x, cy - cabeza.y);
+    float centerPull = 0;
+    float centerDist = toCenter.mag();
+    if (centerDist > 0.0001) {
+      toCenter.normalize();
+      float far = constrain(map(centerDist, r * 1.1, r * 2.0, 0, 1), 0, 1);
+      centerPull = far * ROAM_TOWARD_CENTER_BOOST;
+    }
+
+    float moodDamp = 1.0;
+    if (state == FEAR) moodDamp *= ROAM_FEEL_FEAR_DAMP;
+    if (state == AGGRESSIVE) moodDamp *= ROAM_FEEL_AGG_DAMP;
+
+    PVector roam = new PVector(0, 0);
+    roam.add(PVector.mult(toTarget, ROAM_WEIGHT * glideSteerScale * steerPhaseGate));
+    roam.add(PVector.mult(tangent, ROAM_TANGENT_WEIGHT * glideSteerScale * steerPhaseGate));
+    if (centerPull > 0) {
+      roam.add(PVector.mult(toCenter, centerPull * steerPhaseGate));
+    }
+    roam.mult(moodDamp);
+    roamMagLast = roam.mag();
+    roamActive = roamMagLast > 0.08;
+    debugSteerRoam.set(roam);
+    return roam;
   }
 
   // Contraction amount: 0..1 with contract/hold/release shaping

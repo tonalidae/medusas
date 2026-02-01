@@ -40,20 +40,31 @@ float remoteSmoothY = -1000;
 
 // --- VOLUMETRIC INTERACTION VARS ---
 // Hand tracking configuration
-final int MAX_HANDS = 6;              // persistent slots 0..5
+// Up to four people at once when using body/pose tracking
+final int MAX_HANDS = 4;              // persistent slots 0..3
 final int HAND_POINTS_PER_HAND = 6;   // keep legacy per-hand stride
 // Stores previous positions for up to MAX_HANDS × HAND_POINTS_PER_HAND points
 PVector[] prevHandPoints = new PVector[MAX_HANDS * HAND_POINTS_PER_HAND];
 float[] prevHandDepth = new float[MAX_HANDS * HAND_POINTS_PER_HAND];
 float[] handSizes = new float[MAX_HANDS];   // bbox size cue per slot
+float[] handArmEnergy = new float[MAX_HANDS];       // raw arm-energy per slot
+float[] handArmEnergySmoothed = new float[MAX_HANDS];
+
+// Arm-motion → wake scaling (used when pose/upper-limb tracking is driving OSC)
+float ARM_ENERGY_SMOOTH_ALPHA = 0.22;  // low-pass for jittery velocities
+float ARM_ENERGY_MIN = 6.0;            // pixels of upper-limb motion
+float ARM_ENERGY_MAX = 120.0;          // pixels/frame considered vigorous
+float ARM_WAKE_MIN = 0.7;              // lower bound multiplier on wake amount
+float ARM_WAKE_MAX = 2.4;              // upper bound multiplier on wake amount
 
 boolean handPresent = false;
 int lastHandTime = 0;
 boolean handNear = false;      // True when user's hand is close enough to interact
 float handProximity = 0;       // 0..1 estimate of closeness
 float handProximitySmoothed = 0;
-float HAND_NEAR_THR = 0.075;   // Hysteresis thresholds for proximity gate (tuned for smaller hands)
-float HAND_FAR_THR = 0.05;
+// Thresholds tuned for body-sized detections (shoulders/torso anchors)
+float HAND_NEAR_THR = 0.10;   // hysteresis gate: nearer than this → near
+float HAND_FAR_THR = 0.06;    // farther than this → far
 float HAND_PROX_ALPHA = 0.2;
 boolean HAND_FLIP_X = true;    // Flip horizontal when camera faces the screen
 boolean HAND_FLIP_Y = false;   // Set true if camera is upside-down
@@ -65,8 +76,8 @@ float tapScore = 0;                 // accumulates recent taps
 int tapLastUpdateMs = 0;
 int tapLastTriggerMs = -9999;
 float TAP_DECAY_PER_SEC = 1.5;      // how fast tapScore decays without taps
-int TAP_FEAR_THR = 6;               // taps within window to scare
-int TAP_AGG_THR = 12;               // taps within window to anger
+int TAP_FEAR_THR = 10;              // taps within window to scare
+int TAP_AGG_THR = 18;               // taps within window to anger
 int TAP_TRIGGER_COOLDOWN_MS = 2500; // cooldown after forcing a mood burst
 boolean prevMouseDown = false;      // edge detect mouse taps
 
@@ -80,10 +91,10 @@ float HAND_RELEASE_WAKE_SPEED = 7.0;   // speed that counts as a "launch" from p
 float HAND_RELEASE_WAKE_MULT = 1.6;    // strength multiplier for launch trail
 int HAND_RELEASE_WAKE_STEPS = 8;       // number of blobs along the first movement segment
 int handFearLastMs = 0;                // last time we forced fear from harsh press motion
-float HAND_FEAR_SPEED = 3;          // px/frame speed that counts as harsh press motion
-float HAND_FEAR_RADIUS = 220;          // radius in px to scare nearby jellies
-float HAND_FEAR_FIELD_SCALE = 1.4;     // extra fear deposited into mood field
-int HAND_FEAR_COOLDOWN_MS = 450;       // min gap between forced fear events
+float HAND_FEAR_SPEED = 5;          // px/frame speed that counts as harsh press motion
+float HAND_FEAR_RADIUS = 200;          // radius in px to scare nearby jellies
+float HAND_FEAR_FIELD_SCALE = 1.1;     // extra fear deposited into mood field
+int HAND_FEAR_COOLDOWN_MS = 700;       // min gap between forced fear events
 float HAND_DEPTH_STILL_THR = 0.045;    // max normalized depth change while still (triplet mode)
 
 // Tap normalization and gating
@@ -101,6 +112,7 @@ int[] handTapLastMs = new int[MAX_HANDS];
 int pendingTapHand = -1;
 int pendingTapStartMs = -9999;
 int lastUserAggMs = -9999; // last time user acted aggressively (harsh/tap scare)
+boolean preferOSCHands = true; // when true, disable mouse fallback if OSC hand data is present
 
 // Friendly interaction accumulation (hand tracker)
 float[] handFriendlyMs = new float[MAX_HANDS];
@@ -116,6 +128,41 @@ float swarmCentroidY = 0;
 ArrayList<Gusano> gusanos;
 int numGusanos = 7;
 int numSegmentos = 30;
+
+// Global bias: keep the swarm lower in the tank (0 = none, 1 = force bottom)
+float GLOBAL_VERTICAL_PULL = 0.28;
+// Center the pull around this normalized height (0=top,1=bottom)
+float GLOBAL_VERTICAL_TARGET = 0.78;
+
+// --- Ecosystem variety profiles (per-agent biases) ---
+String[] ECOSYSTEM_LABELS = {
+  "Kelp",
+  "Coral",
+  "Bloom",
+  "Deep"
+};
+int[] ECOSYSTEM_TINTS = {
+  #2FAF81CC,
+  #FF7CAACC,
+  #7FF1EBCC,
+  #8B78E0CC
+};
+float[] ECOSYSTEM_SPEED_MOD = {
+  0.92, 1.1, 1.04, 0.85
+};
+float[] ECOSYSTEM_SIZE_MOD = {
+  1.15, 0.85, 0.95, 1.2
+};
+float[] ECOSYSTEM_CURIOSITY_BOOST = {
+  0.08, 0.22, 0.01, 0.3
+};
+float[] ECOSYSTEM_EDGE_WEIGHT = {
+  -0.28, 0.32, 0.1, -0.18
+};
+float[] ECOSYSTEM_VERTICAL_BIAS = {
+  0.35, -0.25, 0.12, -0.4
+};
+int ECOSYSTEM_PROFILE_COUNT = ECOSYSTEM_TINTS.length;
 
 float timeScale = 0.001;
 float t = 0;
@@ -135,6 +182,23 @@ boolean debugJumps = false;
 boolean AUTO_HEAL_NANS = false;
 boolean debugCycles = false;
 boolean debugBiologicalVectors = false;
+boolean useRoamingPaths = true;  // when idle, follow koi-like drifting loops
+
+// --- Roaming path tuning (koi-like figure-eights) ---
+float ROAM_RADIUS_MIN = 140;
+float ROAM_RADIUS_MAX = 320;
+float ROAM_CENTER_FREQ = 0.08;   // low drift speed for path centers (per second on t)
+float ROAM_ANG_VEL_MIN = 0.012;  // radians per frame (@60fps)
+float ROAM_ANG_VEL_MAX = 0.035;
+float ROAM_WEIGHT = 1.4;         // base steer weight for the path follower
+float ROAM_TANGENT_WEIGHT = 0.65; // how much to bias along-path tangentially
+float ROAM_CENTER_MARGIN = 140;  // keep centers away from walls
+float ROAM_RADIUS_JITTER = 0.35; // modulation to make figure-eights
+float ROAM_FEEL_FEAR_DAMP = 0.25; // reduce path pull when fearful
+float ROAM_FEEL_AGG_DAMP = 0.15;  // reduce during aggressive chase
+float ROAM_TOWARD_CENTER_BOOST = 0.9; // if far from center, lean inward
+float ROAM_SPEED_BOOST = 1.15;    // increase max speed when cruising on a path
+float ROAM_DRAG_REDUCE = 0.97;    // slightly lower drag while path-cruising
 
 // --- Water interaction rendering ---
 // Enhanced fluid visualization scales for richer, more dynamic appearance
@@ -159,21 +223,21 @@ float BIOLIGHT_STREAK_STRENGTH = 0.6;    // Motion trailing amount (0..1)
 // --- Jelly motion tuning (minimal, reversible knobs) ---
 float UNDULATION_MAX = 0.15;
 float UNDULATION_SPEED_EXP = 2.0;
-float GLIDE_STEER_SCALE = 0.25;
+float GLIDE_STEER_SCALE = 0.4;
 float GLIDE_HEAD_NOISE_SCALE = 0.4;
 float GLIDE_BODY_TURB_SCALE = 0.55;
 float FOLLOW_CONTRACTION_BOOST = 1.15;
 float FOLLOW_GLIDE_REDUCE = 0.7;
 float SIDE_SLIP_DAMP = 0.05; // Lower = less sideways slip (more diagonal motion)
 float THRUST_SMOOTH_ALPHA = 0.18; // Lower = smoother, slower response
-float RECOVERY_THRUST_SCALE = 0.18; // Small tail force during relaxation
-float DRAG_RELAX_SCALE = 1.03; // Slightly higher drag during relaxation
+float RECOVERY_THRUST_SCALE = 0.28; // Small tail force during relaxation
+float DRAG_RELAX_SCALE = 1.01; // Slightly higher drag during relaxation
 float DRAG_CONTRACT_SCALE = 0.96; // Slightly lower drag during contraction
 float CYCLE_EMA_ALPHA = 0.2; // Rolling average smoothing for cycle debug
-float STEER_SMOOTH_ALPHA = 0.18; // Lower = smoother turns, higher = snappier
+float STEER_SMOOTH_ALPHA = 0.24; // Lower = smoother turns, higher = snappier
 float STEER_FLIP_DOT = -0.2; // If desired steer points opposite, damp the flip
 float STEER_FLIP_SLOW = 0.15; // Extra damping factor on flips
-float MAX_TURN_RAD = 0.25; // Max turn per frame (~14 deg)
+float MAX_TURN_RAD = 0.35; // Max turn per frame (~20 deg)
 
 boolean LOCK_MOOD_TO_PERSONALITY = false;
 
@@ -206,18 +270,54 @@ boolean DEBUG_MOOD = false;
 float CURIOUS_STICK_MS = 6000;   // how long a curious jelly keeps memory of the user
 float CURIOUS_ATTRACT = 1.0;     // base attraction toward user when curious
 float CURIOUS_ORBIT = 0.28;      // sideways orbit factor to avoid pinning
-float FEAR_MEMORY_MS = 8000;     // how long a fear imprint lingers
-float FEAR_AVOID_BOOST = 1.8;    // flee multiplier when fear memory is active
+float USER_DANCE_RADIUS = 190;   // preferred swirl distance around user
+float USER_DANCE_ORBIT = 0.55;   // tangential swirl strength near user
+float USER_DANCE_ATTRACT = 0.45; // radial pull to maintain dance radius
+float USER_DANCE_MEM_THR = 0.15; // minimum curiosity memory to dance
+float USER_DANCE_AFFINITY_THR = 0.15; // minimum affinity to dance
+float USER_DANCE_PHASE_MIN = 0.55; // minimum phase gate during dance
+float USER_DANCE_FIG8_BLEND = 0.75; // 0=orbit, 1=figure-8
+float USER_DANCE_FIG8_FREQ = 0.35;  // cycles/sec for infinity path
+float USER_DANCE_FIG8_Y_SCALE = 0.8; // vertical scale of the 8
+float USER_DANCE_IMPULSE = 1.18; // extra steering push during user dance
+float DANCE_AXIS_CHANGE_PROB = 0.7; // chance to jitter axis during dance
+int DANCE_AXIS_MIN_INTERVAL_MS = 1800;
+int DANCE_AXIS_MAX_INTERVAL_MS = 4300;
+float DANCE_RADIUS_JITTER = 0.2;   // relative radius variation
+float DANCE_ORBIT_JITTER = 0.2;    // relative orbit strength variation
+float DANCE_IMPULSE_JITTER = 0.25; // relative impulse variation
+float FEAR_MEMORY_MS = 6000;     // how long a fear imprint lingers
+float FEAR_AVOID_BOOST = 1.3;    // flee multiplier when fear memory is active
 
 // --- Energy / fatigue loop ---
 float ENERGY_MAX = 1.0;
 float ENERGY_MIN = 0.3;
-float ENERGY_DRAIN_RATE = 0.00035;   // scales with thrust impulse
-float ENERGY_RECOVER_RATE = 0.00025; // base recover per frame (scaled by dtNorm)
+float ENERGY_DRAIN_RATE = 0.00028;   // scales with thrust impulse
+float ENERGY_RECOVER_RATE = 0.00032; // base recover per frame (scaled by dtNorm)
 float ENERGY_CALM_BONUS = 2.0;       // recovery multiplier when CALM
-float ENERGY_LOW_DRAG_BOOST = 0.25;  // extra drag when tired (1-energy) * this
-float ENERGY_MAXSPEED_SCALE = 0.3;   // fraction of maxSpeed lost when fully tired
+float ENERGY_LOW_DRAG_BOOST = 0.18;  // extra drag when tired (1-energy) * this
+float ENERGY_MAXSPEED_SCALE = 0.22;  // fraction of maxSpeed lost when fully tired
 
+// --- Exploration tuning ---
+float EXPLORATION_WEIGHT = 0.18;     // how strongly individuals steer toward empty cells
+float EXPLORATION_OCCUPANCY_SCALE = 4.0; // counts above this behave as "crowded"
+float SWARM_SPREAD_RADIUS = 280;     // how close to swarm centroid we need to be before spreading
+float SWARM_SPREAD_STRENGTH = 0.24;   // how much force pushes outward from the centroid
+
+float BIOME_STEER_WEIGHT = 1.35;      // how strongly to pull toward biome target
+int   BIOME_TARGET_INTERVAL_MIN_MS = 9000;
+int   BIOME_TARGET_INTERVAL_MAX_MS = 18000;
+float BIOME_EDGE_BIAS = 0.35;         // 0=center, 1=edge preference
+float BIOME_AVOID_FEAR_SCALE = 0.4;   // reduce biome pull while fearful
+float BIOME_LIKE_RATE = 0.003;        // per-frame affinity gain in calm/curious
+float BIOME_AVOID_RATE = 0.006;       // per-frame affinity loss in fear
+float BIOME_DECAY = 0.9985;           // per-frame decay of stored affinities
+float BIOME_MIN_DIST = 140;           
+
+float DRIFT_PULSE_MAG = 0.07;         // ±7% pulse rate wander
+float DRIFT_DRAG_MAG = 0.04;          // ±4% drag wander
+float DRIFT_WANDER_MAG = 0.10;        // ±10% wander weight wander
+float DRIFT_SPEED = 0.015;            // cycles per second of drift
 // --- Field fear tuning ---
 float FIELD_FEAR_STARTLE_THRESHOLD = 0.6; // field value required to trigger fear
 float FIELD_FEAR_THREAT_MIN = 0.25;       // threat signal minimum to accept the field startle
@@ -237,6 +337,20 @@ float BUDDY_SOCIAL_THR = 0.55;
 float BUDDY_PICK_CHANCE = 0.008;   // per frame chance when eligible
 float BUDDY_DURATION_MS = 4200;
 float BUDDY_COH_WEIGHT = 0.9;
+float BUDDY_DANCE_RADIUS = 170;    // preferred orbit distance between buddies
+float BUDDY_DANCE_ORBIT = 0.65;    // tangential swirl strength
+float BUDDY_DANCE_ATTRACT = 0.6;   // radial pull to maintain dance radius
+float BUDDY_DANCE_PHASE_MIN = 0.55; // minimum phase gate during buddy dance
+float BUDDY_DANCE_FIG8_BLEND = 0.8; // 0=orbit, 1=figure-8
+float BUDDY_DANCE_FIG8_FREQ = 0.4;  // cycles/sec for infinity path
+float BUDDY_DANCE_FIG8_Y_SCALE = 0.85; // vertical scale of the 8
+float BUDDY_DANCE_IMPULSE = 3; // extra steering push during buddy dance
+float BUDDY_LOOP_RADIUS = 280;        // large loop radius for paired figure eights
+float BUDDY_LOOP_Y_SCALE = 0.45;      // flatten vertical amplitude for a horizontal ∞
+float BUDDY_LOOP_FREQ = 0.16;         // slow cycle rate for graceful circling
+float BUDDY_LOOP_STRENGTH = 2.6;      // steering weight for the pair loops
+float BUDDY_LOOP_NOISE_FREQ = 0.11;   // phase jitter so pairs drift a bit
+float BUDDY_LOOP_LEGACY_BLEND = 0.38; // keep legacy buddy dance signals while letting loops dominate
 
 // --- Frustration (wall/flow memory) ---
 float FRUSTRATION_DECAY = 0.96;
@@ -244,11 +358,11 @@ float FRUSTRATION_TURN_BOOST = 0.6;
 float FRUSTRATION_WALL_PUSH = 0.8;
 
 // --- Mood field diffusion ---
-float MOOD_FIELD_DECAY = 0.92;   // base decay per 16ms; now time-scaled
-float MOOD_FIELD_SPLAT = 1.0;
-float MOOD_FIELD_NEIGHBOR_SPLAT = 0.5;
-float MOOD_FIELD_DIAGONAL_SPLAT = 0.35;
-float MOOD_FIELD_MAX = 2.0;
+float MOOD_FIELD_DECAY = 0.96;   // base decay per 16ms; now time-scaled (higher = slower fade)
+float MOOD_FIELD_SPLAT = 1.4;
+float MOOD_FIELD_NEIGHBOR_SPLAT = 0.65;
+float MOOD_FIELD_DIAGONAL_SPLAT = 0.45;
+float MOOD_FIELD_MAX = 2.6;
 
 // --- Mood stabilization config (conservative defaults) ---
 int MOOD_COOLDOWN_FRAMES = 30;   // ~0.5s at 60fps
@@ -281,11 +395,11 @@ int lastMoodSummaryFrame = 0;
 // --- Render-safe clamp margins (keep full body on screen) ---
 // Base (pixel) safety margins; fallbacks when percentage-based clamps are tiny
 float clampMarginX = 120;
-float clampMarginTop = 80;
+float clampMarginTop = 30;
 float clampMarginBottom = 260;
 // Percentage-based invisible box (relative to viewport); actual margins are max(pixel, percent*size)
 float clampMarginPctX = 0.08;      // 8% from each side
-float clampMarginTopPct = 0.30;    // keep top 30% clear
+float clampMarginTopPct = 0.12;    // keep top ~12% clear
 float clampMarginBottomPct = 0.08; // keep bottom 8% clear
 float clampMarginMinX = 80;
 float clampMarginMinTop = 60;
