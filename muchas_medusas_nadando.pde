@@ -1191,7 +1191,9 @@ void processHandSamples(int[] slots, float[] xs, float[] ys, float[] zs, boolean
     float prevY = prev.y;
     float speed = dist(x, y, prevX, prevY);
     float wakeScale = armWakeScaleForHand(h);
-    if (handNear && speed > 2.0) {
+    boolean touching = (!TOUCH_MODE_ENABLED) || touchDown[h];
+    float pressureScale = TOUCH_MODE_ENABLED ? max(0.15, touchPressure[h]) : 1.0;
+    if (handNear && speed > 2.0 && touching) {
       float radius = map(speed, 0, 60, 25, 65);
       float force = map(speed, 0, 60, 0.5, 2.5);
       float depthScale = 1.0;
@@ -1200,13 +1202,13 @@ void processHandSamples(int[] slots, float[] xs, float[] ys, float[] zs, boolean
         depthScale = constrain(map(farther, -0.3, 0.3, 1.8, 0.6), 0.4, 2.5);
         radius *= map(depthScale, 0.4, 2.5, 0.8, 1.4);
       }
-      depositWakeBlob(x, y, radius, userDeposit * 0.4 * force * depthScale * wakeScale);
+      depositWakeBlob(x, y, radius, userDeposit * 0.4 * force * depthScale * wakeScale * pressureScale);
     }
 
     prevHandPoints[pointIndex].set(x, y);
     prevHandDepth[pointIndex] = depth;
 
-    if (!primarySet) {
+    if (!primarySet && (!TOUCH_MODE_ENABLED || touchDown[h])) {
       primaryX = x;
       primaryY = y;
       primarySpeed = speed;
@@ -1256,10 +1258,12 @@ void processHandSamples(int[] slots, float[] xs, float[] ys, float[] zs, boolean
   boolean wasEngaged = handEngaged;
   float depthDelta = (primaryHasDepth && primaryHadPrevDepth) ? abs(primaryDepth - primaryPrevDepth) : 0;
   boolean stableDepth = (!primaryHasDepth || (primaryHasDepth && depthDelta < HAND_DEPTH_STILL_THR));
-  boolean launchMove = wasEngaged && primarySet && primarySpeed >= HAND_RELEASE_WAKE_SPEED;
+  boolean launchMove = (!TOUCH_MODE_ENABLED) && wasEngaged && primarySet && primarySpeed >= HAND_RELEASE_WAKE_SPEED;
   boolean harshPressMove = handEngaged && primarySet && primarySpeed >= HAND_FEAR_SPEED && !stableDepth;
   int engagedHand = handEngaged ? primaryHand : -1;
   float primaryWakeScale = armWakeScaleForHand(primaryHand);
+  boolean primaryTouching = (!TOUCH_MODE_ENABLED) || (primarySet && touchDown[primaryHand]);
+  float primaryPressure = TOUCH_MODE_ENABLED ? (primarySet ? max(0.15, touchPressure[primaryHand]) : 0.0) : 1.0;
 
   if (handNear && primarySet && primarySpeed < HAND_STILL_SPEED && stableDepth) {
     handStillMs += dtMs;
@@ -1317,19 +1321,20 @@ void processHandSamples(int[] slots, float[] xs, float[] ys, float[] zs, boolean
     }
   }
 
-  if (handEngaged && primarySet) {
+  if (handEngaged && primarySet && primaryTouching) {
     float pressRadius = map(handProximitySmoothed, 0, 1, 35, 70);
-    depositWakeBlob(primaryX, primaryY, pressRadius, userDeposit * 1.1 * primaryWakeScale);
+    float scaledRadius = pressRadius * primaryPressure;
+    depositWakeBlob(primaryX, primaryY, scaledRadius, userDeposit * 1.1 * primaryWakeScale * primaryPressure);
   }
 
-  if (handEngaged && primarySet && primaryHadPrev && stableDepth && primarySpeed > 2.0) {
+  if (handEngaged && primarySet && primaryTouching && primaryHadPrev && stableDepth && primarySpeed > 2.0) {
     int steps = max(2, int(map(primarySpeed, 2, 40, 2, 10)));
     for (int i = 0; i < steps; i++) {
       float t = (float)i / (float)(steps - 1);
       float px = lerp(primaryPrevX, primaryX, t);
       float py = lerp(primaryPrevY, primaryY, t);
       float radius = lerp(40, 65, t);
-      depositWakeBlob(px, py, radius, userDeposit * primaryWakeScale);
+      depositWakeBlob(px, py, radius, userDeposit * primaryWakeScale * primaryPressure);
     }
   }
 
@@ -1397,6 +1402,24 @@ void oscEvent(OscMessage msg) {
         handArmEnergySmoothed[i] = lerp(handArmEnergySmoothed[i], 0, ARM_ENERGY_SMOOTH_ALPHA);
       }
     }
+  } else if (msg.checkAddrPattern("/touch")) {
+    Object[] args = msg.arguments();
+    int slotCount = (args != null) ? min(MAX_HANDS, args.length / 4) : 0;
+    for (int i = 0; i < slotCount; i++) {
+      int base = i * 4;
+      float down = msg.get(base).floatValue();
+      touchDown[i] = down >= 0.5;
+      touchXNorm[i] = msg.get(base + 1).floatValue();
+      touchYNorm[i] = msg.get(base + 2).floatValue();
+      touchPressure[i] = msg.get(base + 3).floatValue();
+    }
+    for (int i = slotCount; i < MAX_HANDS; i++) {
+      touchDown[i] = false;
+      touchXNorm[i] = 0;
+      touchYNorm[i] = 0;
+      touchPressure[i] = 0;
+    }
+    handled = true;
   } else if (msg.checkAddrPattern("/hands")) {
     Object[] args = msg.arguments();
     if (args != null && args.length >= 4) {
