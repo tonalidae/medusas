@@ -49,6 +49,11 @@ float[] prevHandDepth = new float[MAX_HANDS * HAND_POINTS_PER_HAND];
 float[] handSizes = new float[MAX_HANDS];   // bbox size cue per slot
 float[] handArmEnergy = new float[MAX_HANDS];       // raw arm-energy per slot
 float[] handArmEnergySmoothed = new float[MAX_HANDS];
+final boolean TOUCH_MODE_ENABLED = true;
+boolean[] touchDown = new boolean[MAX_HANDS];
+float[] touchPressure = new float[MAX_HANDS];
+float[] touchXNorm = new float[MAX_HANDS];
+float[] touchYNorm = new float[MAX_HANDS];
 
 // Arm-motion → wake scaling (used when pose/upper-limb tracking is driving OSC)
 float ARM_ENERGY_SMOOTH_ALPHA = 0.22;  // low-pass for jittery velocities
