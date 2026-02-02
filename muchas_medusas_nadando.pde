@@ -4,16 +4,6 @@ import java.util.Map;
 
 // Configuration moved to Config.pde
 
-// Convert per-slot arm energy into a wake strength multiplier
-float armWakeScaleForHand(int h) {
-  if (h < 0 || h >= handArmEnergySmoothed.length) return 1.0;
-  float e = handArmEnergySmoothed[h];
-  // If no arm-energy has been provided (legacy hand tracker), stay neutral.
-  if (e <= 0) return 1.0;
-  float s = map(e, ARM_ENERGY_MIN, ARM_ENERGY_MAX, ARM_WAKE_MIN, ARM_WAKE_MAX);
-  return constrain(s, ARM_WAKE_MIN, ARM_WAKE_MAX);
-}
-
 void setup() {
   size(1280, 800, P2D);
   updateClampMargins(); // initialize invisible box once size is known
@@ -21,16 +11,6 @@ void setup() {
   oscP5 = new OscP5(this, 12000);
 println("[OSC] Listening on port 12000");
   stroke(0, 66);
-  
-  // Initialize bloom effect buffers and shaders
-  bloomScene = createGraphics(width, height, P2D);
-  bloomBrightPass = createGraphics(width, height, P2D);
-  bloomBlurPass1 = createGraphics(width, height, P2D);
-  bloomBlurPass2 = createGraphics(width, height, P2D);
-  
-  bloomBrightShader = loadShader("bright.glsl");
-  bloomBlurShader = loadShader("blur.glsl");
-  bloomCompositeShader = loadShader("composite.glsl");
 
   // Init water texture buffer (half-res, scaled up)
   int tw = max(1, int(width * WATER_TEX_SCALE));
@@ -129,16 +109,11 @@ void draw() {
       prevHandPoints[i] = null;
       prevHandDepth[i] = 0;
     }
-    for(int h=0; h<MAX_HANDS; h++) {
-      handSizes[h] = 0;
-      handArmEnergy[h] = 0;
-      handArmEnergySmoothed[h] = 0;
-    }
   }
 
-  // 2. Mouse Fallback (Only works if no OSC hand is detected, or override)
+  // 2. Mouse Fallback (Only works if no hand is detected)
   // This lets you test with mouse when the camera isn't running
-  if (!handPresent && (mousePressed || mouseSpeed > 12) && !preferOSCHands) {
+  if (!handPresent && (mousePressed || mouseSpeed > 12)) {
     depositWakeBlob(mouseX, mouseY, 70, userDeposit);
   }
 
@@ -172,15 +147,6 @@ void draw() {
   }
 
   int fearCount = 0;
-  
-  // Calculate average glow for dynamic bloom
-  float avgGlow = 0;
-  for (Gusano gusano : gusanos) {
-    avgGlow += gusano.getGlowIntensity();
-  }
-  if (gusanos.size() > 0) {
-    avgGlow /= gusanos.size();
-  }
   
   // First pass: render bioluminescence glow (behind body)
   if (useBioluminescence) {
@@ -240,49 +206,6 @@ void draw() {
     noStroke();
     fill(255, 40, 40, a);
     rect(0, 0, width, height);
-  }
-  
-  // === Apply bloom effect ===
-  if (enableBloom) {
-    // Copy current frame to bloom scene buffer
-    bloomScene.beginDraw();
-    bloomScene.image(get(), 0, 0);
-    bloomScene.endDraw();
-    
-    // Extract bright pixels with dynamic threshold
-    bloomBrightShader.set("threshold", bloomThreshold - avgGlow * 0.2);
-    bloomBrightPass.beginDraw();
-    bloomBrightPass.shader(bloomBrightShader);
-    bloomBrightPass.image(bloomScene, 0, 0);
-    bloomBrightPass.endDraw();
-    
-    // Blur horizontally and vertically multiple times
-    PGraphics currentBlur = bloomBrightPass;
-    for (int i = 0; i < blurIterations; i++) {
-      // Horizontal blur
-      bloomBlurShader.set("direction", 1.0, 0.0);
-      bloomBlurPass1.beginDraw();
-      bloomBlurPass1.shader(bloomBlurShader);
-      bloomBlurPass1.image(currentBlur, 0, 0);
-      bloomBlurPass1.endDraw();
-      
-      // Vertical blur
-      bloomBlurShader.set("direction", 0.0, 1.0);
-      bloomBlurPass2.beginDraw();
-      bloomBlurPass2.shader(bloomBlurShader);
-      bloomBlurPass2.image(bloomBlurPass1, 0, 0);
-      bloomBlurPass2.endDraw();
-      
-      currentBlur = bloomBlurPass2;
-    }
-    
-    // Clear and composite scene + bloom with dynamic intensity
-    background(0);
-    bloomCompositeShader.set("bloomTexture", currentBlur);
-    bloomCompositeShader.set("bloomIntensity", bloomIntensity + avgGlow * 0.8);
-    shader(bloomCompositeShader);
-    image(bloomScene, 0, 0);
-    resetShader();
   }
 }
 
@@ -458,46 +381,6 @@ void keyPressed() {
     // Cycle bloom scale
     BIOLIGHT_BLOOM_SCALE = (BIOLIGHT_BLOOM_SCALE >= 2.0) ? 0.5 : BIOLIGHT_BLOOM_SCALE + 0.25;
     println("[BIOLIGHT] bloom scale=" + nf(BIOLIGHT_BLOOM_SCALE, 1, 2));
-  } else if (key == 'z' || key == 'Z') {
-    // Toggle bloom effect
-    enableBloom = !enableBloom;
-    println("[BLOOM] enabled=" + enableBloom);
-  } else if (key == '[') {
-    // Decrease bloom threshold (more glow)
-    bloomThreshold = constrain(bloomThreshold - 0.05, 0.1, 0.9);
-    println("[BLOOM] threshold=" + nf(bloomThreshold, 0, 2));
-  } else if (key == ']') {
-    // Increase bloom threshold (less glow)
-    bloomThreshold = constrain(bloomThreshold + 0.05, 0.1, 0.9);
-    println("[BLOOM] threshold=" + nf(bloomThreshold, 0, 2));
-  } else if (key == '{') {
-    // Decrease bloom intensity
-    bloomIntensity = constrain(bloomIntensity - 0.2, 0.5, 5.0);
-    println("[BLOOM] intensity=" + nf(bloomIntensity, 0, 2));
-  } else if (key == '}') {
-    // Increase bloom intensity
-    bloomIntensity = constrain(bloomIntensity + 0.2, 0.5, 5.0);
-    println("[BLOOM] intensity=" + nf(bloomIntensity, 0, 2));
-  } else if (key == 'z' || key == 'Z') {
-    // Toggle bloom effect
-    enableBloom = !enableBloom;
-    println("[BLOOM] enableBloom=" + enableBloom);
-  } else if (key == '[') {
-    // Decrease bloom threshold (more glow)
-    bloomThreshold = constrain(bloomThreshold - 0.05, 0.1, 0.9);
-    println("[BLOOM] threshold=" + nf(bloomThreshold, 0, 2));
-  } else if (key == ']') {
-    // Increase bloom threshold (less glow)
-    bloomThreshold = constrain(bloomThreshold + 0.05, 0.1, 0.9);
-    println("[BLOOM] threshold=" + nf(bloomThreshold, 0, 2));
-  } else if (key == '{') {
-    // Decrease bloom intensity
-    bloomIntensity = constrain(bloomIntensity - 0.2, 0.5, 5.0);
-    println("[BLOOM] intensity=" + nf(bloomIntensity, 0, 2));
-  } else if (key == '}') {
-    // Increase bloom intensity
-    bloomIntensity = constrain(bloomIntensity + 0.2, 0.5, 5.0);
-    println("[BLOOM] intensity=" + nf(bloomIntensity, 0, 2));
   }
 }
 
@@ -506,7 +389,7 @@ void reiniciarGusanos() {
   gusanos.clear();
   for (int i = 0; i < numGusanos; i++) {
     float x = random(200, width-200);
-    float y = random(height * 0.45, height-200); // spawn lower to match user interaction zone
+    float y = random(200, height-200);
     color c = color(0, 66); // Todos los gusanos son negros
     gusanos.add(new Gusano(x, y, c, i));
   }
@@ -793,30 +676,13 @@ void decayMoodGrid() {
 }
 
 void rebuildSpatialGrid() {
-  if (gusanos == null) return;
-  boolean needsRebuild = spatialGrid.isEmpty();
-  if (!needsRebuild) {
-    for (Gusano g : gusanos) {
-      if (g == null || g.segmentos == null || g.segmentos.size() == 0) continue;
-      Segmento h = g.segmentos.get(0);
-      int cx = floor(h.x / gridCellSize);
-      int cy = floor(h.y / gridCellSize);
-      if (cx != g.lastCellX || cy != g.lastCellY) {
-        needsRebuild = true;
-        break;
-      }
-    }
-  }
-  if (!needsRebuild) return;
-
   spatialGrid.clear();
+  if (gusanos == null) return;
   for (Gusano g : gusanos) {
     if (g == null || g.segmentos == null || g.segmentos.size() == 0) continue;
     Segmento h = g.segmentos.get(0);
     int cx = floor(h.x / gridCellSize);
     int cy = floor(h.y / gridCellSize);
-    g.lastCellX = cx;
-    g.lastCellY = cy;
     long key = cellKey(cx, cy);
     ArrayList<Gusano> bucket = spatialGrid.get(key);
     if (bucket == null) {
@@ -971,17 +837,6 @@ void drawAverageVelocity() {
   ellipse(cx, cy, 8, 8);
   popStyle();
 }
-
-// PGraphics wrapper overloads for debug drawing (simple fallback to main canvas)
-void drawWakeGrid(PGraphics pg) { drawWakeGrid(); }
-void drawAverageVelocity(PGraphics pg) { drawAverageVelocity(); }
-void drawDebugObjectives(PGraphics pg) { drawDebugObjectives(); }
-void debugMeasureFlowMean(PGraphics pg) { debugMeasureFlowMean(); }
-void debugNeighborStatsTick(PGraphics pg) { debugNeighborStatsTick(); }
-void debugMoodStatsTick(PGraphics pg) { debugMoodStatsTick(); }
-void debugMoodSummaryTick(PGraphics pg) { debugMoodSummaryTick(); }
-void drawDebugHelp(PGraphics pg) { drawDebugHelp(); }
-void drawBiologicalVectorDebug(PGraphics pg) { drawBiologicalVectorDebug(); }
 
 void debugNeighborStatsTick() {
   if (gusanos == null || gusanos.size() == 0) return;
@@ -1303,10 +1158,7 @@ void processHandSamples(int[] slots, float[] xs, float[] ys, float[] zs, boolean
     float prevX = prev.x;
     float prevY = prev.y;
     float speed = dist(x, y, prevX, prevY);
-    float wakeScale = armWakeScaleForHand(h);
-    boolean touching = (!TOUCH_MODE_ENABLED) || touchDown[h];
-    float pressureScale = TOUCH_MODE_ENABLED ? max(0.15, touchPressure[h]) : 1.0;
-    if (handNear && speed > 2.0 && touching) {
+    if (handNear && speed > 2.0) {
       float radius = map(speed, 0, 60, 25, 65);
       float force = map(speed, 0, 60, 0.5, 2.5);
       float depthScale = 1.0;
@@ -1315,13 +1167,13 @@ void processHandSamples(int[] slots, float[] xs, float[] ys, float[] zs, boolean
         depthScale = constrain(map(farther, -0.3, 0.3, 1.8, 0.6), 0.4, 2.5);
         radius *= map(depthScale, 0.4, 2.5, 0.8, 1.4);
       }
-      depositWakeBlob(x, y, radius, userDeposit * 0.4 * force * depthScale * wakeScale * pressureScale);
+      depositWakeBlob(x, y, radius, userDeposit * 0.4 * force * depthScale);
     }
 
     prevHandPoints[pointIndex].set(x, y);
     prevHandDepth[pointIndex] = depth;
 
-    if (!primarySet && (!TOUCH_MODE_ENABLED || touchDown[h])) {
+    if (!primarySet) {
       primaryX = x;
       primaryY = y;
       primarySpeed = speed;
@@ -1344,8 +1196,6 @@ void processHandSamples(int[] slots, float[] xs, float[] ys, float[] zs, boolean
       prevHandPoints[pointIndex] = null;
       prevHandDepth[pointIndex] = 0;
       handSizes[h] = 0;
-      handArmEnergy[h] = 0;
-      handArmEnergySmoothed[h] = 0;
     }
   }
   for (int j = 0; j < prevHandPoints.length; j++) {
@@ -1371,12 +1221,9 @@ void processHandSamples(int[] slots, float[] xs, float[] ys, float[] zs, boolean
   boolean wasEngaged = handEngaged;
   float depthDelta = (primaryHasDepth && primaryHadPrevDepth) ? abs(primaryDepth - primaryPrevDepth) : 0;
   boolean stableDepth = (!primaryHasDepth || (primaryHasDepth && depthDelta < HAND_DEPTH_STILL_THR));
-  boolean launchMove = (!TOUCH_MODE_ENABLED) && wasEngaged && primarySet && primarySpeed >= HAND_RELEASE_WAKE_SPEED;
+  boolean launchMove = wasEngaged && primarySet && primarySpeed >= HAND_RELEASE_WAKE_SPEED;
   boolean harshPressMove = handEngaged && primarySet && primarySpeed >= HAND_FEAR_SPEED && !stableDepth;
   int engagedHand = handEngaged ? primaryHand : -1;
-  float primaryWakeScale = armWakeScaleForHand(primaryHand);
-  boolean primaryTouching = (!TOUCH_MODE_ENABLED) || (primarySet && touchDown[primaryHand]);
-  float primaryPressure = TOUCH_MODE_ENABLED ? (primarySet ? max(0.15, touchPressure[primaryHand]) : 0.0) : 1.0;
 
   if (handNear && primarySet && primarySpeed < HAND_STILL_SPEED && stableDepth) {
     handStillMs += dtMs;
@@ -1434,20 +1281,19 @@ void processHandSamples(int[] slots, float[] xs, float[] ys, float[] zs, boolean
     }
   }
 
-  if (handEngaged && primarySet && primaryTouching) {
+  if (handEngaged && primarySet) {
     float pressRadius = map(handProximitySmoothed, 0, 1, 35, 70);
-    float scaledRadius = pressRadius * primaryPressure;
-    depositWakeBlob(primaryX, primaryY, scaledRadius, userDeposit * 1.1 * primaryWakeScale * primaryPressure);
+    depositWakeBlob(primaryX, primaryY, pressRadius, userDeposit * 1.1);
   }
 
-  if (handEngaged && primarySet && primaryTouching && primaryHadPrev && stableDepth && primarySpeed > 2.0) {
+  if (handEngaged && primarySet && primaryHadPrev && stableDepth && primarySpeed > 2.0) {
     int steps = max(2, int(map(primarySpeed, 2, 40, 2, 10)));
     for (int i = 0; i < steps; i++) {
       float t = (float)i / (float)(steps - 1);
       float px = lerp(primaryPrevX, primaryX, t);
       float py = lerp(primaryPrevY, primaryY, t);
       float radius = lerp(40, 65, t);
-      depositWakeBlob(px, py, radius, userDeposit * primaryWakeScale * primaryPressure);
+      depositWakeBlob(px, py, radius, userDeposit);
     }
   }
 
@@ -1457,7 +1303,7 @@ void processHandSamples(int[] slots, float[] xs, float[] ys, float[] zs, boolean
       float px = lerp(primaryPrevX, primaryX, t);
       float py = lerp(primaryPrevY, primaryY, t);
       float radius = lerp(45, 70, t);
-      depositWakeBlob(px, py, radius, userDeposit * HAND_RELEASE_WAKE_MULT * primaryWakeScale);
+      depositWakeBlob(px, py, radius, userDeposit * HAND_RELEASE_WAKE_MULT);
     }
   }
 
@@ -1497,42 +1343,7 @@ void oscEvent(OscMessage msg) {
       for (int i = 0; i < n; i++) {
         handSizes[i] = msg.get(i).floatValue();
       }
-      for (int i = n; i < MAX_HANDS; i++) {
-        handSizes[i] = 0;
-      }
     }
-  } else if (msg.checkAddrPattern("/arm_energy")) {
-    Object[] args = msg.arguments();
-    if (args != null) {
-      int n = min(MAX_HANDS, args.length);
-      for (int i = 0; i < n; i++) {
-        float raw = msg.get(i).floatValue();
-        handArmEnergy[i] = raw;
-        handArmEnergySmoothed[i] = lerp(handArmEnergySmoothed[i], raw, ARM_ENERGY_SMOOTH_ALPHA);
-      }
-      for (int i = n; i < MAX_HANDS; i++) {
-        handArmEnergy[i] = 0;
-        handArmEnergySmoothed[i] = lerp(handArmEnergySmoothed[i], 0, ARM_ENERGY_SMOOTH_ALPHA);
-      }
-    }
-  } else if (msg.checkAddrPattern("/touch")) {
-    Object[] args = msg.arguments();
-    int slotCount = (args != null) ? min(MAX_HANDS, args.length / 4) : 0;
-    for (int i = 0; i < slotCount; i++) {
-      int base = i * 4;
-      float down = msg.get(base).floatValue();
-      touchDown[i] = down >= 0.5;
-      touchXNorm[i] = msg.get(base + 1).floatValue();
-      touchYNorm[i] = msg.get(base + 2).floatValue();
-      touchPressure[i] = msg.get(base + 3).floatValue();
-    }
-    for (int i = slotCount; i < MAX_HANDS; i++) {
-      touchDown[i] = false;
-      touchXNorm[i] = 0;
-      touchYNorm[i] = 0;
-      touchPressure[i] = 0;
-    }
-    handled = true;
   } else if (msg.checkAddrPattern("/hands")) {
     Object[] args = msg.arguments();
     if (args != null && args.length >= 4) {

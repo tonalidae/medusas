@@ -42,6 +42,8 @@ class Gusano {
   float aggression;
   float curiosity;
   String personalityLabel;
+  float glowPersonality; // Individual bloom intensity multiplier (0.4-1.4)
+  float biolightPersonality; // Individual biolight intensity multiplier (0.45-1.3)
 
   // Mood/state
   int state;
@@ -234,6 +236,8 @@ class Gusano {
         timidity = random(0.55, 0.85);   // narrow gap toward AGG
         aggression = random(0.1, 0.3);   // give shy a little bite
         curiosity = random(0.15, 0.35);
+        glowPersonality = random(0.4, 0.7); // Dimmer jellyfish
+        biolightPersonality = random(0.45, 0.75); // Very dim biolight
         // Slower, softer cycles (slightly energized)
         basePulseRate = random(0.20, 0.40);
         basePulseStrength = random(0.85, 1.40);
@@ -245,6 +249,8 @@ class Gusano {
         aggression = random(0.7, 1.0);
         // Increase AGG curiosity so these jellyfish seek the user more
         curiosity = random(0.45, 0.85);
+        glowPersonality = random(1.0, 1.4); // Brighter, aggressive glow
+        biolightPersonality = random(1.0, 1.3); // Bright biolight
         // Faster, stronger cycles
         basePulseRate = random(0.22, 0.50);
         basePulseStrength = random(1.1, 2.1);
@@ -255,6 +261,8 @@ class Gusano {
         timidity = random(0.2, 0.5);
         aggression = random(0.0, 0.3);
         curiosity = random(0.7, 1.0);
+        glowPersonality = random(0.8, 1.2); // Medium-bright, curious glow
+        biolightPersonality = random(0.8, 1.1); // Medium biolight
         basePulseRate = random(0.20, 0.42);
         basePulseStrength = random(0.9, 1.4);
         baseDrag = random(0.88, 0.92);
@@ -268,6 +276,8 @@ class Gusano {
         timidity = random(0.1, 0.4);
         aggression = random(0.05, 0.25);
         curiosity = random(0.2, 0.5);
+        glowPersonality = random(0.5, 0.9); // Gentle, dimmer glow
+        biolightPersonality = random(0.55, 0.9); // Gentle biolight
         basePulseRate = random(0.16, 0.32);
         basePulseStrength = random(0.7, 1.1);
         baseDrag = random(0.82, 0.88); // glidier
@@ -948,14 +958,17 @@ class Gusano {
         moodBoost = 0.2;
         break;
       case SHY:
-        moodBoost = -0.1; // Dimmer when shy
+        moodBoost = -0.15; // Dimmer when shy
         break;
       case CALM:
         moodBoost = 0;
         break;
     }
     
-    return constrain(base + speedBoost + pulseBoost + moodBoost, 0.1, 1.0);
+    // Apply personality multiplier (allows individual variation)
+    // Range: 0.4-1.4 personality × (0.3-1.05 dynamic) = 0.12-1.47 final
+    float dynamicGlow = base + speedBoost + pulseBoost + moodBoost;
+    return constrain(dynamicGlow * glowPersonality, 0.25, 1.5);
   }
 
   String stateLabel() {

@@ -133,7 +133,7 @@ class GusanoBiolight {
     emissionSpatial *= (1.0 + 1.2 * photophore); // Photophores boost
     
     // Temporal modulation
-    float emit = glowIntensity * BIOLIGHT_GLOBAL_INTENSITY;
+    float emit = glowIntensity * BIOLIGHT_GLOBAL_INTENSITY * g.biolightPersonality;
     emit *= lerp(1.0, 1.0 + heartbeatBoost, heartbeat);
     emit *= (1.0 + pulseBoost * pulseSync);
     emit *= emissionSpatial;
