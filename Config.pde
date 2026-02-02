@@ -228,8 +228,8 @@ float WATER_CAUSTIC_ALPHA_SCALE = 3.2;  // Enhanced caustic light network
 // --- BIOLUMINESCENCE CONFIG ---
 // Deep-ocean glow system: multi-pass emission, scattering, and sparkle
 boolean useBioluminescence = true;       // Master toggle for glow system
-float BIOLIGHT_GLOBAL_INTENSITY = 0.16;   // Master brightness multiplier (default reduced)
-float BIOLIGHT_BLOOM_SCALE = 1.0;        // Scale all bloom radii
+float BIOLIGHT_GLOBAL_INTENSITY = 0.25;   // Master brightness multiplier (default reduced)
+float BIOLIGHT_BLOOM_SCALE = 1.25;        // Scale all bloom radii
 float BIOLIGHT_HEARTBEAT_HZ = 0.22;      // Slow pulse rate (Hz)
 float BIOLIGHT_PULSE_BOOST = 0.6;        // How much contraction brightens glow
 float BIOLIGHT_RIM_BOOST = 1.4;          // Edge enhancement multiplier
