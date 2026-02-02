@@ -835,6 +835,11 @@ class Gusano {
     if (depositGate > 0.001) {
       float deposit = wakeDeposit * depositGate * (0.6 + vmag * 0.25);
       depositWakePoint(cabeza.x, cabeza.y, deposit);
+      
+      // Spawn water particles when jellyfish moves quickly
+      if (useWaterParticles && depositGate > 0.5 && random(1) < 0.15) {
+        spawnWaterParticles(cabeza.x, cabeza.y, 1);
+      }
     }
   }
 

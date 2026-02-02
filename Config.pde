@@ -19,6 +19,7 @@ boolean useWaterFrames = true;
 boolean showWaterTex = true;
 boolean showWaterInteraction = true; // render wake-based water ink/strokes/caustics
 boolean showFlowTrails = false;       // show organic flow trails layer
+boolean useWaterParticles = true;     // show organic particle connection web
 // Blend mode choice: false -> BLEND (subtle), true -> SCREEN (gentle brighten)
 boolean useScreenBlend = false;
 float waterAlpha = 25; // tint alpha when drawing overlay (0-255) — lowered for greater transparency

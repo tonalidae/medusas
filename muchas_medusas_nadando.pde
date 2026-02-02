@@ -87,8 +87,12 @@ void draw() {
   prevMouseDown = mousePressed;
 
   updateWakeGrid();
+  updateWaterParticles();
   if (showWaterInteraction) {
     drawWaterInteraction();
+    if (useWaterParticles) {
+      drawWaterParticleConnections();
+    }
   }
   // Update non-visual flow feedback so fluid pushes back organically
   updateUserFlowFeedback();
@@ -381,6 +385,10 @@ void keyPressed() {
     // Cycle bloom scale
     BIOLIGHT_BLOOM_SCALE = (BIOLIGHT_BLOOM_SCALE >= 2.0) ? 0.5 : BIOLIGHT_BLOOM_SCALE + 0.25;
     println("[BIOLIGHT] bloom scale=" + nf(BIOLIGHT_BLOOM_SCALE, 1, 2));
+  } else if (key == 'w' || key == 'W') {
+    // Toggle water particle connections
+    useWaterParticles = !useWaterParticles;
+    println("[WATER] particle connections=" + useWaterParticles);
   }
 }
 
