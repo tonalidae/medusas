@@ -929,6 +929,34 @@ class Gusano {
   void dibujarBiolight() {
     biolight.render();
   }
+  
+  float getGlowIntensity() {
+    float base = 0.3;
+    float speedBoost = constrain(vel.mag() / maxSpeed, 0, 1) * 0.2;
+    float pulseBoost = pulseShape(pulsePhase) * 0.15;
+    
+    // Mood-based intensity
+    float moodBoost = 0;
+    switch (state) {
+      case FEAR:
+        moodBoost = 0.5;
+        break;
+      case AGGRESSIVE:
+        moodBoost = 0.4;
+        break;
+      case CURIOUS:
+        moodBoost = 0.2;
+        break;
+      case SHY:
+        moodBoost = -0.1; // Dimmer when shy
+        break;
+      case CALM:
+        moodBoost = 0;
+        break;
+    }
+    
+    return constrain(base + speedBoost + pulseBoost + moodBoost, 0.1, 1.0);
+  }
 
   String stateLabel() {
     return mood.stateLabel();

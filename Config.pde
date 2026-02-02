@@ -25,6 +25,19 @@ float waterAlpha = 25; // tint alpha when drawing overlay (0-255) — lowered fo
 float waterFPS = 12.0;
 OscP5 oscP5;
 
+// --- Bloom Effect ---
+PGraphics bloomScene;
+PGraphics bloomBrightPass;
+PGraphics bloomBlurPass1;
+PGraphics bloomBlurPass2;
+PShader bloomBrightShader;
+PShader bloomBlurShader;
+PShader bloomCompositeShader;
+boolean enableBloom = false;
+float bloomThreshold = 0.5;
+float bloomIntensity = 1.5;
+int blurIterations = 2;
+
 // --- User interaction feedback (non-visual) ---
 boolean useUserFlowFeedback = true;   // keep flow pushback logic active without showing a cursor
 float fearIntensity = 0;             // smoothed global fear ratio (0..1)

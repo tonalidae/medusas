@@ -21,6 +21,16 @@ void setup() {
   oscP5 = new OscP5(this, 12000);
 println("[OSC] Listening on port 12000");
   stroke(0, 66);
+  
+  // Initialize bloom effect buffers and shaders
+  bloomScene = createGraphics(width, height, P2D);
+  bloomBrightPass = createGraphics(width, height, P2D);
+  bloomBlurPass1 = createGraphics(width, height, P2D);
+  bloomBlurPass2 = createGraphics(width, height, P2D);
+  
+  bloomBrightShader = loadShader("bright.glsl");
+  bloomBlurShader = loadShader("blur.glsl");
+  bloomCompositeShader = loadShader("composite.glsl");
 
   // Init water texture buffer (half-res, scaled up)
   int tw = max(1, int(width * WATER_TEX_SCALE));
@@ -163,6 +173,15 @@ void draw() {
 
   int fearCount = 0;
   
+  // Calculate average glow for dynamic bloom
+  float avgGlow = 0;
+  for (Gusano gusano : gusanos) {
+    avgGlow += gusano.getGlowIntensity();
+  }
+  if (gusanos.size() > 0) {
+    avgGlow /= gusanos.size();
+  }
+  
   // First pass: render bioluminescence glow (behind body)
   if (useBioluminescence) {
     for (Gusano gusano : gusanos) {
@@ -221,6 +240,49 @@ void draw() {
     noStroke();
     fill(255, 40, 40, a);
     rect(0, 0, width, height);
+  }
+  
+  // === Apply bloom effect ===
+  if (enableBloom) {
+    // Copy current frame to bloom scene buffer
+    bloomScene.beginDraw();
+    bloomScene.image(get(), 0, 0);
+    bloomScene.endDraw();
+    
+    // Extract bright pixels with dynamic threshold
+    bloomBrightShader.set("threshold", bloomThreshold - avgGlow * 0.2);
+    bloomBrightPass.beginDraw();
+    bloomBrightPass.shader(bloomBrightShader);
+    bloomBrightPass.image(bloomScene, 0, 0);
+    bloomBrightPass.endDraw();
+    
+    // Blur horizontally and vertically multiple times
+    PGraphics currentBlur = bloomBrightPass;
+    for (int i = 0; i < blurIterations; i++) {
+      // Horizontal blur
+      bloomBlurShader.set("direction", 1.0, 0.0);
+      bloomBlurPass1.beginDraw();
+      bloomBlurPass1.shader(bloomBlurShader);
+      bloomBlurPass1.image(currentBlur, 0, 0);
+      bloomBlurPass1.endDraw();
+      
+      // Vertical blur
+      bloomBlurShader.set("direction", 0.0, 1.0);
+      bloomBlurPass2.beginDraw();
+      bloomBlurPass2.shader(bloomBlurShader);
+      bloomBlurPass2.image(bloomBlurPass1, 0, 0);
+      bloomBlurPass2.endDraw();
+      
+      currentBlur = bloomBlurPass2;
+    }
+    
+    // Clear and composite scene + bloom with dynamic intensity
+    background(0);
+    bloomCompositeShader.set("bloomTexture", currentBlur);
+    bloomCompositeShader.set("bloomIntensity", bloomIntensity + avgGlow * 0.8);
+    shader(bloomCompositeShader);
+    image(bloomScene, 0, 0);
+    resetShader();
   }
 }
 
@@ -396,6 +458,46 @@ void keyPressed() {
     // Cycle bloom scale
     BIOLIGHT_BLOOM_SCALE = (BIOLIGHT_BLOOM_SCALE >= 2.0) ? 0.5 : BIOLIGHT_BLOOM_SCALE + 0.25;
     println("[BIOLIGHT] bloom scale=" + nf(BIOLIGHT_BLOOM_SCALE, 1, 2));
+  } else if (key == 'z' || key == 'Z') {
+    // Toggle bloom effect
+    enableBloom = !enableBloom;
+    println("[BLOOM] enabled=" + enableBloom);
+  } else if (key == '[') {
+    // Decrease bloom threshold (more glow)
+    bloomThreshold = constrain(bloomThreshold - 0.05, 0.1, 0.9);
+    println("[BLOOM] threshold=" + nf(bloomThreshold, 0, 2));
+  } else if (key == ']') {
+    // Increase bloom threshold (less glow)
+    bloomThreshold = constrain(bloomThreshold + 0.05, 0.1, 0.9);
+    println("[BLOOM] threshold=" + nf(bloomThreshold, 0, 2));
+  } else if (key == '{') {
+    // Decrease bloom intensity
+    bloomIntensity = constrain(bloomIntensity - 0.2, 0.5, 5.0);
+    println("[BLOOM] intensity=" + nf(bloomIntensity, 0, 2));
+  } else if (key == '}') {
+    // Increase bloom intensity
+    bloomIntensity = constrain(bloomIntensity + 0.2, 0.5, 5.0);
+    println("[BLOOM] intensity=" + nf(bloomIntensity, 0, 2));
+  } else if (key == 'z' || key == 'Z') {
+    // Toggle bloom effect
+    enableBloom = !enableBloom;
+    println("[BLOOM] enableBloom=" + enableBloom);
+  } else if (key == '[') {
+    // Decrease bloom threshold (more glow)
+    bloomThreshold = constrain(bloomThreshold - 0.05, 0.1, 0.9);
+    println("[BLOOM] threshold=" + nf(bloomThreshold, 0, 2));
+  } else if (key == ']') {
+    // Increase bloom threshold (less glow)
+    bloomThreshold = constrain(bloomThreshold + 0.05, 0.1, 0.9);
+    println("[BLOOM] threshold=" + nf(bloomThreshold, 0, 2));
+  } else if (key == '{') {
+    // Decrease bloom intensity
+    bloomIntensity = constrain(bloomIntensity - 0.2, 0.5, 5.0);
+    println("[BLOOM] intensity=" + nf(bloomIntensity, 0, 2));
+  } else if (key == '}') {
+    // Increase bloom intensity
+    bloomIntensity = constrain(bloomIntensity + 0.2, 0.5, 5.0);
+    println("[BLOOM] intensity=" + nf(bloomIntensity, 0, 2));
   }
 }
 
@@ -869,6 +971,17 @@ void drawAverageVelocity() {
   ellipse(cx, cy, 8, 8);
   popStyle();
 }
+
+// PGraphics wrapper overloads for debug drawing (simple fallback to main canvas)
+void drawWakeGrid(PGraphics pg) { drawWakeGrid(); }
+void drawAverageVelocity(PGraphics pg) { drawAverageVelocity(); }
+void drawDebugObjectives(PGraphics pg) { drawDebugObjectives(); }
+void debugMeasureFlowMean(PGraphics pg) { debugMeasureFlowMean(); }
+void debugNeighborStatsTick(PGraphics pg) { debugNeighborStatsTick(); }
+void debugMoodStatsTick(PGraphics pg) { debugMoodStatsTick(); }
+void debugMoodSummaryTick(PGraphics pg) { debugMoodSummaryTick(); }
+void drawDebugHelp(PGraphics pg) { drawDebugHelp(); }
+void drawBiologicalVectorDebug(PGraphics pg) { drawBiologicalVectorDebug(); }
 
 void debugNeighborStatsTick() {
   if (gusanos == null || gusanos.size() == 0) return;
