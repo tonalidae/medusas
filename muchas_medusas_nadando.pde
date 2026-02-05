@@ -104,12 +104,42 @@ void draw() {
     lastHandFrameMs = 0;
     handProximity = 0;
     handProximitySmoothed = 0;
+    handUserX = -1000;
+    handUserY = -1000;
+    handUserSpeed = 0;
+    handUserEnergy = 0;
+    handUserDepth = 0;
+    handDepthPress = 0;
     // Reset points so the next touch doesn't create a "teleport" splash
     for(int i=0; i<prevHandPoints.length; i++) {
       prevHandPoints[i] = null;
       prevHandDepth[i] = 0;
     }
   }
+
+  // Update user proxy (hand preferred, mouse fallback)
+  if (handPresent) {
+    userUsingHand = true;
+    if (userX < -900 || userY < -900) {
+      userX = handUserX;
+      userY = handUserY;
+    } else {
+      userX = lerp(userX, handUserX, USER_POS_SMOOTH);
+      userY = lerp(userY, handUserY, USER_POS_SMOOTH);
+    }
+    float energySpeed = handUserEnergy * ARM_ENERGY_SPEED_SCALE;
+    userSpeed = max(handUserSpeed, energySpeed);
+    userEnergy = handUserEnergy;
+  } else {
+    userUsingHand = false;
+    userX = mouseX;
+    userY = mouseY;
+    userSpeed = mouseSpeed;
+    userEnergy = 0;
+  }
+  userEnergyHigh = constrain(map(userEnergy, USER_ENERGY_HIGH_THR, 1.0, 0.0, 1.0), 0.0, 1.0);
+  userEnergyLow = constrain(map(userEnergy, 0.0, USER_ENERGY_LOW_THR, 1.0, 0.0), 0.0, 1.0);
+  userPressed = (handEngaged || mousePressed);
 
   // 2. Mouse Fallback (Only works if no hand is detected)
   // This lets you test with mouse when the camera isn't running
@@ -1145,6 +1175,10 @@ void processHandSamples(int[] slots, float[] xs, float[] ys, float[] zs, boolean
     float proxSize = handSizes[h];
     float prox = max(proxDepth, proxSize);
     proximityBest = max(proximityBest, prox);
+    float energyN = constrain(handArmEnergy[h] / ARM_ENERGY_MAX, 0.0, 1.0);
+    float energyBoost = lerp(1.0, 1.0 + ARM_ENERGY_WAKE_BOOST, energyN);
+    float depthPress = hasDepth ? constrain(map(depth, 0.4, -0.2, 0.0, 1.0), 0.0, 1.0) : 0.0;
+    float depthBoost = lerp(1.0, 1.0 + HAND_DEPTH_INTENSITY_BOOST, depthPress);
     used[pointIndex] = true;
 
     PVector prev = prevHandPoints[pointIndex];
@@ -1167,7 +1201,7 @@ void processHandSamples(int[] slots, float[] xs, float[] ys, float[] zs, boolean
         depthScale = constrain(map(farther, -0.3, 0.3, 1.8, 0.6), 0.4, 2.5);
         radius *= map(depthScale, 0.4, 2.5, 0.8, 1.4);
       }
-      depositWakeBlob(x, y, radius, userDeposit * 0.4 * force * depthScale);
+      depositWakeBlob(x, y, radius, userDeposit * 0.4 * force * depthScale * energyBoost * depthBoost);
     }
 
     prevHandPoints[pointIndex].set(x, y);
@@ -1208,6 +1242,21 @@ void processHandSamples(int[] slots, float[] xs, float[] ys, float[] zs, boolean
   handPresent = anyPresent;
   if (anyPresent) {
     lastHandTime = nowMs;
+  }
+  if (primarySet) {
+    float energyRaw = handArmEnergy[primaryHand];
+    float energyN = constrain(energyRaw / ARM_ENERGY_MAX, 0.0, 1.0);
+    handUserX = primaryX;
+    handUserY = primaryY;
+    handUserSpeed = primarySpeed;
+    handUserEnergy = lerp(handUserEnergy, energyN, ARM_ENERGY_SMOOTH);
+    handUserDepth = primaryDepth;
+    float depthPress = primaryHasDepth ? constrain(map(primaryDepth, 0.4, -0.2, 0.0, 1.0), 0.0, 1.0) : 0.0;
+    handDepthPress = lerp(handDepthPress, depthPress, HAND_DEPTH_PRESS_SMOOTH);
+  } else {
+    handUserSpeed = 0;
+    handUserEnergy = lerp(handUserEnergy, 0, ARM_ENERGY_SMOOTH);
+    handDepthPress = lerp(handDepthPress, 0, HAND_DEPTH_PRESS_SMOOTH);
   }
 
   handProximity = proximityBest;
@@ -1283,7 +1332,9 @@ void processHandSamples(int[] slots, float[] xs, float[] ys, float[] zs, boolean
 
   if (handEngaged && primarySet) {
     float pressRadius = map(handProximitySmoothed, 0, 1, 35, 70);
-    depositWakeBlob(primaryX, primaryY, pressRadius, userDeposit * 1.1);
+    float pressBoost = lerp(1.0, 1.0 + ARM_ENERGY_WAKE_BOOST, handUserEnergy);
+    float depthPressBoost = lerp(1.0, 1.0 + HAND_DEPTH_INTENSITY_BOOST, handDepthPress);
+    depositWakeBlob(primaryX, primaryY, pressRadius, userDeposit * 1.1 * pressBoost * depthPressBoost);
   }
 
   if (handEngaged && primarySet && primaryHadPrev && stableDepth && primarySpeed > 2.0) {
@@ -1293,7 +1344,9 @@ void processHandSamples(int[] slots, float[] xs, float[] ys, float[] zs, boolean
       float px = lerp(primaryPrevX, primaryX, t);
       float py = lerp(primaryPrevY, primaryY, t);
       float radius = lerp(40, 65, t);
-      depositWakeBlob(px, py, radius, userDeposit);
+      float trailBoost = lerp(1.0, 1.0 + ARM_ENERGY_WAKE_BOOST, handUserEnergy);
+      float depthTrailBoost = lerp(1.0, 1.0 + HAND_DEPTH_INTENSITY_BOOST, handDepthPress);
+      depositWakeBlob(px, py, radius, userDeposit * trailBoost * depthTrailBoost);
     }
   }
 
@@ -1303,7 +1356,9 @@ void processHandSamples(int[] slots, float[] xs, float[] ys, float[] zs, boolean
       float px = lerp(primaryPrevX, primaryX, t);
       float py = lerp(primaryPrevY, primaryY, t);
       float radius = lerp(45, 70, t);
-      depositWakeBlob(px, py, radius, userDeposit * HAND_RELEASE_WAKE_MULT);
+      float launchBoost = lerp(1.0, 1.0 + ARM_ENERGY_WAKE_BOOST, handUserEnergy);
+      float depthLaunchBoost = lerp(1.0, 1.0 + HAND_DEPTH_INTENSITY_BOOST, handDepthPress);
+      depositWakeBlob(px, py, radius, userDeposit * HAND_RELEASE_WAKE_MULT * launchBoost * depthLaunchBoost);
     }
   }
 
@@ -1326,7 +1381,9 @@ void processHandSamples(int[] slots, float[] xs, float[] ys, float[] zs, boolean
   }
   if (wasEngaged && !handEngaged) {
     int hIdx = (engagedHand >= 0) ? min(engagedHand, handFriendlyMs.length - 1) : 0;
+    float lowEnergyBoost = constrain(map(handUserEnergy, 0.0, USER_ENERGY_LOW_THR, 1.0, 0.0), 0.0, 1.0);
     float delta = (handFriendlyMs[hIdx] / 1000.0) * FRIEND_AFFINITY_RATE;
+    delta *= (1.0 + lowEnergyBoost * USER_ENERGY_LOW_AFFINITY_BOOST);
     if (delta != 0) applyUserAffinityDelta(delta);
     handFriendlyMs[hIdx] = 0;
     handFriendlyStableMs[hIdx] = 0;
@@ -1342,6 +1399,15 @@ void oscEvent(OscMessage msg) {
       int n = min(MAX_HANDS, args.length);
       for (int i = 0; i < n; i++) {
         handSizes[i] = msg.get(i).floatValue();
+      }
+    }
+  } else if (msg.checkAddrPattern("/arm_energy")) {
+    Object[] args = msg.arguments();
+    if (args != null) {
+      int n = min(MAX_HANDS, args.length);
+      for (int i = 0; i < n; i++) {
+        float v = max(0, msg.get(i).floatValue());
+        handArmEnergy[i] = lerp(handArmEnergy[i], v, ARM_ENERGY_SMOOTH);
       }
     }
   } else if (msg.checkAddrPattern("/hands")) {

@@ -20,10 +20,10 @@ class GusanoSteering {
       float contractCurve = g.pulseContractCurve(g.pulsePhase);
       float steerPhaseGate = lerp(0.2, 1.0, contractCurve);
 
-      float dMouse = dist(cabeza.x, cabeza.y, mouseX, mouseY);
+      float dUser = dist(cabeza.x, cabeza.y, userX, userY);
       // If mouse is nearby, mostly still, and this agent has high curiosity, approach
-      if (dMouse < 350 && g.curiosity > 0.45 && mouseSpeed < 4) {
-        PVector toMouse = new PVector(mouseX - cabeza.x, mouseY - cabeza.y);
+      if (dUser < 350 && g.curiosity > 0.45 && userSpeed < 4) {
+        PVector toMouse = new PVector(userX - cabeza.x, userY - cabeza.y);
         if (toMouse.magSq() > 0.0001) {
           toMouse.normalize();
           PVector m = PVector.mult(toMouse, 2.0 * steerPhaseGate * g.curiosity);
@@ -63,20 +63,20 @@ class GusanoSteering {
     float wanderW = (g.state == Gusano.CALM) ? 2.4 : 1.2;
     float avoidW = (g.state == Gusano.FEAR) ? 5.0 : 1.8;
     float sepW = (g.state == Gusano.SHY || g.state == Gusano.FEAR) ? 2.8 : 1.2;
-    float mouseSenseDist = 350;
+    float mouseSenseDist = 500;
 
     PVector forward = new PVector(cos(g.headAngle), sin(g.headAngle));
 
     // --- 2. USER AS ORGANISM (Fear/Curiosity) ---
     // The user is no longer a "hack"—the medusa "sees" the mouse
     // Fear can partially override phase gating (survival instinct)
-    float dMouse = dist(cabeza.x, cabeza.y, mouseX, mouseY);
+    float dMouse = dist(cabeza.x, cabeza.y, userX, userY);
     if (dMouse < mouseSenseDist) {
-      PVector toMouse = new PVector(mouseX - cabeza.x, mouseY - cabeza.y);
+      PVector toMouse = new PVector(userX - cabeza.x, userY - cabeza.y);
       toMouse.normalize();
 
       // Remember user presence for lingering curiosity
-      if (mouseSpeed < 6) {
+      if (userSpeed < 6) {
         g.lastUserSeenMs = millis();
         g.userInterest = 1.0;
       }
@@ -84,15 +84,18 @@ class GusanoSteering {
       float fearMem = g.fearMemory * exp(-(millis() - g.lastFearUserMs) / FEAR_MEMORY_MS);
       float globalFear = fearIntensity; // average swarm fear (0..1)
       float effectiveFear = max(fearMem, globalFear * 0.8);
+      if (userUsingHand) {
+        effectiveFear = constrain(effectiveFear + userEnergyHigh * USER_ENERGY_FEAR_BOOST, 0, 1.5);
+      }
 
       // Fear gets partial phase bypass (survival)
       float fearPhaseGate = (g.state == Gusano.FEAR) ? lerp(0.6, 1.0, contractCurve) : steerPhaseGate;
       
-      if (g.state == Gusano.FEAR || effectiveFear > 0.05 || (mousePressed && dMouse < 100)) {
+      if (g.state == Gusano.FEAR || effectiveFear > 0.05 || (userPressed && dMouse < 100)) {
         float fleeScale = 6.0 * fearPhaseGate;
         if (effectiveFear > 0.05) fleeScale *= lerp(1.0, FEAR_AVOID_BOOST, effectiveFear);
         fleeScale *= (1.0 + globalFear * 1.5); // swarm-wide fear -> stronger avoidance
-        boolean userChasing = (dMouse < 260 && mouseSpeed > 6) || (handPresent && mouseSpeed > 4);
+        boolean userChasing = (dMouse < 260 && userSpeed > 6) || (handPresent && userSpeed > 4);
         if (g.state == Gusano.FEAR && userChasing) {
           fleeScale *= 1.4;
           PVector dodge = new PVector(-toMouse.y, toMouse.x);
@@ -106,7 +109,7 @@ class GusanoSteering {
         g.adjustAffinity(-0.0015); // being scared nudges resentment
       } else {
         float mem = g.userInterest * exp(-(millis() - g.lastUserSeenMs) / CURIOUS_STICK_MS);
-        if ((g.state == Gusano.CURIOUS || mem > 0.1) && mouseSpeed < 6) {
+        if ((g.state == Gusano.CURIOUS || mem > 0.1) && userSpeed < 6) {
           // Gentle approach plus sideways orbit so it feels exploratory
           float friendlyBoost = (affinity > 0) ? (1.0 + affinity * 0.6) : (1.0 + affinity * 0.2);
           float fearDampen = 1.0 - min(0.8, globalFear * 0.8); // reduce attraction when swarm is scared

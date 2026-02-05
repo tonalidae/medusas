@@ -402,6 +402,9 @@ class Gusano {
     headAngle = lerpAngle(headAngle, limitedAngle, turnRate);
 
     float maxSpeedEff = maxSpeed * (0.7 + ENERGY_MAXSPEED_SCALE * energy); // tired -> lower cap
+    if (userUsingHand && userEnergyHigh > 0.001) {
+      maxSpeedEff *= lerp(1.0, USER_ENERGY_SPEED_BOOST, userEnergyHigh);
+    }
     float speed01 = constrain(vmagNow / maxSpeedEff, 0, 1);
     float thrustScale = constrain(1.0 - speed01, 0.15, 1.0);
 

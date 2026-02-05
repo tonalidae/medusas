@@ -4,14 +4,14 @@ float[][] wake;
 float[][] wakeNext;
 
 // Core wake parameters
-float wakeDecay = 0.992;         // Slower fade -> thicker, longer-lived ripples
+float wakeDecay = 0.995;         // Slower fade -> thicker, longer-lived ripples
 float wakeDiffuse = 0.20;
 float wakeDeposit = 1.0;
-float userDeposit = 2.0;
-float wakeClamp = 12.0;          // Higher cap so dense wakes can accumulate before clipping
+float userDeposit = 3.0;
+float wakeClamp = 16.0;          // Higher cap so dense wakes can accumulate before clipping
 float wakeTension = 0.06;       // Surface-tension style curvature feedback (0 = off)
 float wakeCurlStrength = 0.12;  // Small rotational kick to keep ripples swirling
-float wakeBlobRadiusScale = 1.25; // Enlarge deposits to feel more viscous
+float wakeBlobRadiusScale = 1.5; // Enlarge deposits to feel more viscous
 
 // Flow shaping
 float swirlStrength = 0.6;
@@ -335,6 +335,12 @@ void drawWaterInteraction() {
   if (wake == null) return;
   float cellW = width / (float)gridW;
   float cellH = height / (float)gridH;
+  boolean pressActive = userUsingHand && handDepthPress > 0.02 && userX > -900 && userY > -900;
+  float pressRadius = HAND_DEPTH_LAYER_RADIUS * lerp(0.7, 1.2, handDepthPress);
+  float pressRadiusSq = pressRadius * pressRadius;
+  float pressStrength = handDepthPress * HAND_DEPTH_LAYER_STRENGTH;
+  float pressX = userX;
+  float pressY = userY;
 
   // --- Layer 1: Depth-mapped fluid base with iridescence ---
   noStroke();
@@ -357,6 +363,21 @@ void drawWaterInteraction() {
       float b = lerp(120, 200, depth + edge * 0.3) + iridescence * 20;
       
       float a = constrain(v * WATER_INK_ALPHA_SCALE * (0.7 + edge * 1.2), 0, 120);
+      if (pressActive) {
+        float cx = (x + 0.5) * cellW;
+        float cy = (y + 0.5) * cellH;
+        float pdx = cx - pressX;
+        float pdy = cy - pressY;
+        float d2 = pdx * pdx + pdy * pdy;
+        if (d2 < pressRadiusSq) {
+          float falloff = 1.0 - (sqrt(d2) / pressRadius);
+          float press = falloff * pressStrength;
+          r = constrain(r + 35 * press, 0, 255);
+          g = constrain(g + 55 * press, 0, 255);
+          b = constrain(b + 85 * press, 0, 255);
+          a *= (1.0 + press);
+        }
+      }
       fill(r, g, b, a);
       rect(x * cellW, y * cellH, cellW + 1, cellH + 1);
     }

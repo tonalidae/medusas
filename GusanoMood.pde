@@ -70,6 +70,9 @@ class GusanoMood {
     float wAggressive = 0.3 + g.aggression * 1.2;
     float userMem = g.userInterest * exp(-(millis() - g.lastUserSeenMs) / CURIOUS_STICK_MS);
     wCurious += 1.2 * userMem;
+    if (userUsingHand) {
+      wCurious += USER_ENERGY_LOW_CURIOSITY_BOOST * userEnergyLow;
+    }
     wCurious += g.fieldCalm * (0.6 + 0.4 * g.social);
     wCalm += g.fieldCalm * (0.6 + g.social);
     wShy += g.fieldFear * (0.5 + 0.5 * g.timidity);

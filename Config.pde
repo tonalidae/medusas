@@ -46,14 +46,20 @@ final int HAND_POINTS_PER_HAND = 6;   // keep legacy per-hand stride
 PVector[] prevHandPoints = new PVector[MAX_HANDS * HAND_POINTS_PER_HAND];
 float[] prevHandDepth = new float[MAX_HANDS * HAND_POINTS_PER_HAND];
 float[] handSizes = new float[MAX_HANDS];   // bbox size cue per slot
+float[] handArmEnergy = new float[MAX_HANDS]; // raw energy per slot from /arm_energy
+
+float ARM_ENERGY_MAX = 2.5;       // expected max energy from Kinect (tune)
+float ARM_ENERGY_SMOOTH = 0.3;    // extra smoothing on received energy
+float ARM_ENERGY_WAKE_BOOST = 1.2; // max additional wake strength (0..2 -> +120%)
+float ARM_ENERGY_SPEED_SCALE = 8.0; // convert normalized energy to px/frame userSpeed
 
 boolean handPresent = false;
 int lastHandTime = 0;
 boolean handNear = false;      // True when user's hand is close enough to interact
 float handProximity = 0;       // 0..1 estimate of closeness
 float handProximitySmoothed = 0;
-float HAND_NEAR_THR = 0.075;   // Hysteresis thresholds for proximity gate (tuned for smaller hands)
-float HAND_FAR_THR = 0.05;
+float HAND_NEAR_THR = 0.055;   // Hysteresis thresholds for proximity gate (tuned for stronger interaction)
+float HAND_FAR_THR = 0.035;
 float HAND_PROX_ALPHA = 0.2;
 boolean HAND_FLIP_X = true;    // Flip horizontal when camera faces the screen
 boolean HAND_FLIP_Y = false;   // Set true if camera is upside-down
@@ -75,7 +81,7 @@ boolean handEngaged = false;
 int handStillMs = 0;
 int lastHandFrameMs = 0;
 float HAND_STILL_SPEED = 3.5;      // px/frame speed considered still
-int HAND_STILL_DWELL_MS = 220;     // dwell time to become engaged
+int HAND_STILL_DWELL_MS = 160;     // dwell time to become engaged
 float HAND_RELEASE_WAKE_SPEED = 7.0;   // speed that counts as a "launch" from press
 float HAND_RELEASE_WAKE_MULT = 1.6;    // strength multiplier for launch trail
 int HAND_RELEASE_WAKE_STEPS = 8;       // number of blobs along the first movement segment
@@ -85,6 +91,33 @@ float HAND_FEAR_RADIUS = 220;          // radius in px to scare nearby jellies
 float HAND_FEAR_FIELD_SCALE = 1.4;     // extra fear deposited into mood field
 int HAND_FEAR_COOLDOWN_MS = 450;       // min gap between forced fear events
 float HAND_DEPTH_STILL_THR = 0.045;    // max normalized depth change while still (triplet mode)
+
+// --- User proxy (hand preferred, mouse fallback) ---
+float handUserX = -1000;
+float handUserY = -1000;
+float handUserSpeed = 0;
+float handUserEnergy = 0; // normalized 0..1 (from arm energy)
+float handUserDepth = 0;  // raw depth (z) from /hands
+float handDepthPress = 0; // 0..1 depth pressure (near = 1)
+float userX = -1000;
+float userY = -1000;
+float userSpeed = 0;
+float userEnergy = 0;
+float userEnergyHigh = 0;
+float userEnergyLow = 0;
+boolean userUsingHand = false;
+boolean userPressed = false;
+float USER_POS_SMOOTH = 0.22;
+float USER_ENERGY_HIGH_THR = 0.65;
+float USER_ENERGY_LOW_THR = 0.25;
+float USER_ENERGY_FEAR_BOOST = 0.8;      // adds to effective fear (0..1)
+float USER_ENERGY_SPEED_BOOST = 1.35;    // max speed multiplier when energy high
+float USER_ENERGY_LOW_CURIOSITY_BOOST = 1.0;
+float USER_ENERGY_LOW_AFFINITY_BOOST = 1.2;
+float HAND_DEPTH_PRESS_SMOOTH = 0.25;
+float HAND_DEPTH_LAYER_RADIUS = 240;
+float HAND_DEPTH_LAYER_STRENGTH = 0.55;
+float HAND_DEPTH_INTENSITY_BOOST = 0.8;  // wake strength boost when close to screen
 
 // Tap normalization and gating
 float TAP_DECAY_PER_SEC_ACTIVE = 0.8;
@@ -203,8 +236,8 @@ boolean STABILIZE_MOOD = true;
 boolean DEBUG_MOOD = false;
 
 // --- Curious stickiness toward user ---
-float CURIOUS_STICK_MS = 6000;   // how long a curious jelly keeps memory of the user
-float CURIOUS_ATTRACT = 1.0;     // base attraction toward user when curious
+float CURIOUS_STICK_MS = 9000;   // how long a curious jelly keeps memory of the user
+float CURIOUS_ATTRACT = 1.5;     // base attraction toward user when curious
 float CURIOUS_ORBIT = 0.28;      // sideways orbit factor to avoid pinning
 float FEAR_MEMORY_MS = 8000;     // how long a fear imprint lingers
 float FEAR_AVOID_BOOST = 1.8;    // flee multiplier when fear memory is active
