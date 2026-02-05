@@ -5,7 +5,7 @@ import java.util.Map;
 // Configuration moved to Config.pde
 
 void setup() {
-  size(1280, 800, P2D);
+  fullScreen(P2D);
   updateClampMargins(); // initialize invisible box once size is known
   // Use a simple per-frame background clear instead of a pre-rendered gradient.
   oscP5 = new OscP5(this, 12000);
@@ -1264,7 +1264,7 @@ void processHandSamples(int[] slots, float[] xs, float[] ys, float[] zs, boolean
     if (HAND_FLIP_X) xn = 1.0 - xn;
     if (HAND_FLIP_Y) yn = 1.0 - yn;
     float x = xn * width;
-    float y = yn * height;
+    float y = yn * height + HAND_Y_OFFSET_PX;
     float depth = hasDepth ? zs[i] : 0.0;
     float proxDepth = hasDepth ? constrain(map(-depth, -0.2, 0.4, 1.0, 0.0), 0.0, 1.0) : 0.0;
     float proxSize = handSizes[h];
