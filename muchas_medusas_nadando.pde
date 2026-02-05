@@ -1379,6 +1379,26 @@ void processHandSamples(int[] slots, float[] xs, float[] ys, float[] zs, boolean
       }
     }
   }
+  if (handNear && primarySet && (nowMs - lastUserAggMs) > USER_AGG_COOLDOWN_MS) {
+    boolean aggressiveMove = (primarySpeed >= USER_AGG_SPEED_THR && handUserEnergy >= USER_AGG_ENERGY_THR);
+    boolean aggressiveClose = (handDepthPress >= USER_AGG_DEPTH_THR && primarySpeed > HAND_STILL_SPEED * 1.2);
+    if (aggressiveMove || aggressiveClose) {
+      markUserFearEvent();
+      splatMoodField(primaryX, primaryY, MOOD_FIELD_SPLAT * USER_AGG_FIELD_SCALE, 0);
+      if (gusanos != null) {
+        for (Gusano g : gusanos) {
+          Segmento head = g.segmentos.get(0);
+          if (head == null) continue;
+          if (dist(head.x, head.y, primaryX, primaryY) <= USER_AGG_FEAR_RADIUS) {
+            if (g.state != Gusano.FEAR && g.fearCooldownFrames <= 0) {
+              g.lastFearReason = "USER_AGGRO";
+              g.mood.setState(Gusano.FEAR, random(1.2, 2.2));
+            }
+          }
+        }
+      }
+    }
+  }
   if (wasEngaged && !handEngaged) {
     int hIdx = (engagedHand >= 0) ? min(engagedHand, handFriendlyMs.length - 1) : 0;
     float lowEnergyBoost = constrain(map(handUserEnergy, 0.0, USER_ENERGY_LOW_THR, 1.0, 0.0), 0.0, 1.0);

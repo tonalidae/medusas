@@ -86,10 +86,10 @@ float HAND_RELEASE_WAKE_SPEED = 7.0;   // speed that counts as a "launch" from p
 float HAND_RELEASE_WAKE_MULT = 1.6;    // strength multiplier for launch trail
 int HAND_RELEASE_WAKE_STEPS = 8;       // number of blobs along the first movement segment
 int handFearLastMs = 0;                // last time we forced fear from harsh press motion
-float HAND_FEAR_SPEED = 3;          // px/frame speed that counts as harsh press motion
-float HAND_FEAR_RADIUS = 220;          // radius in px to scare nearby jellies
+float HAND_FEAR_SPEED = 2.4;        // px/frame speed that counts as harsh press motion
+float HAND_FEAR_RADIUS = 260;       // radius in px to scare nearby jellies
 float HAND_FEAR_FIELD_SCALE = 1.4;     // extra fear deposited into mood field
-int HAND_FEAR_COOLDOWN_MS = 450;       // min gap between forced fear events
+int HAND_FEAR_COOLDOWN_MS = 320;       // min gap between forced fear events
 float HAND_DEPTH_STILL_THR = 0.045;    // max normalized depth change while still (triplet mode)
 
 // --- User proxy (hand preferred, mouse fallback) ---
@@ -118,6 +118,14 @@ float HAND_DEPTH_PRESS_SMOOTH = 0.25;
 float HAND_DEPTH_LAYER_RADIUS = 240;
 float HAND_DEPTH_LAYER_STRENGTH = 0.55;
 float HAND_DEPTH_INTENSITY_BOOST = 0.8;  // wake strength boost when close to screen
+
+// --- Kinect aggression detection (no click) ---
+float USER_AGG_SPEED_THR = 4.5;     // px/frame quick motion
+float USER_AGG_ENERGY_THR = 0.45;   // normalized energy
+float USER_AGG_DEPTH_THR = 0.35;    // closeness to screen (0..1)
+int USER_AGG_COOLDOWN_MS = 900;     // throttle aggressive scare events
+float USER_AGG_FEAR_RADIUS = 300;   // radius to scare nearby jellies
+float USER_AGG_FIELD_SCALE = 1.2;   // mood field splat scale
 
 // Tap normalization and gating
 float TAP_DECAY_PER_SEC_ACTIVE = 0.8;
