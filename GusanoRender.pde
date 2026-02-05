@@ -15,6 +15,10 @@ class GusanoRender {
   Gusano g;
   float alignDx = 0;
   float alignDy = 0;
+  float[] localPxBuffer = new float[POINT_COUNT];
+  float[] localPyBuffer = new float[POINT_COUNT];
+  float[] worldXBuffer = new float[POINT_COUNT];
+  float[] worldYBuffer = new float[POINT_COUNT];
 
   GusanoRender(Gusano g) {
     this.g = g;
@@ -179,7 +183,6 @@ class GusanoRender {
         rebound = bounce * (1.0 - release);
       }
       
-      // Radial contract + elastic rebound tied to thrust
       float topCurve = 1.0 - verticalProgression * 0.5; // top responds a bit more
       float rimCurve = 0.4 + verticalProgression * 0.6; // rim drives the push
       float radialContract = lerp(1.0, 0.72, contraction * rimCurve);
@@ -187,11 +190,9 @@ class GusanoRender {
       float baseBreath = lerp(1.3, 0.7, contraction);
       float localBreath = baseBreath * (radialContract + radialRebound);
 
-      // Vertical compression during contraction + slight rebound
       float verticalSqueeze = lerp(1.0, 0.92, contraction * topCurve);
       verticalSqueeze += rebound * 0.04 * topCurve;
 
-      // Thrust-linked snap up, elastic settle down
       float localPulse = (contractCurve * 8.0 - rebound * 5.0) * (0.5 + 0.5 * topCurve);
 
       float px = q * localBreath;
@@ -212,10 +213,15 @@ class GusanoRender {
       }
 
       float pulseOffset = localPulse * (0.5 - verticalProgression);
+      float localY = py + pulseOffset;
+      localPxBuffer[idx] = px;
+      localPyBuffer[idx] = localY;
+      worldXBuffer[idx] = x;
+      worldYBuffer[idx] = y;
       sumLocalX += px;
-      sumLocalY += py + pulseOffset;
+      sumLocalY += localY;
       sumWorldX += px + x;
-      sumWorldY += py + pulseOffset + y;
+      sumWorldY += localY + y;
       localCount++;
     }
     if (localCount > 0) {
@@ -238,63 +244,12 @@ class GusanoRender {
     int worldCount = 0;
     pg.beginShape(POINTS);
     for (int idx = 0; idx < POINT_COUNT; idx++) {
-      float k = cache.k[idx];
-      float d = cache.d[idx];
-      float pyVal = cache.py[idx];
-      float verticalProgression = cache.vertProg[idx];
-      float q = cache.qConst[idx] + cache.qScale[idx] * sin(cache.sinBase[idx] - t * timeFreq);
-
-      float dragOffset = verticalProgression * 1.5;
-      float phaseOffset = g.noiseOffset * 0.001 + g.id * 0.13;
-      float phase = wrap01(g.pulsePhase + phaseOffset - dragOffset * 0.08);
-      float contraction = g.pulseShape(phase); // 0 = relaxed, 1 = contracted
-      float contractCurve = g.pulseContractCurve(phase); // thrust-weighted contraction
-      float cPortion = max(0.0001, g.contractPortion);
-      float h = max(0.0, g.holdPortion);
-      float r = max(0.0001, 1.0 - cPortion - h);
-      float p = wrap01(phase);
-      float release = (p > cPortion + h) ? (p - cPortion - h) / r : 0.0;
-      float rebound = 0.0;
-      if (release > 0.0) {
-        float bounce = sin(PI * min(release * 1.25, 1.0));
-        rebound = bounce * (1.0 - release);
-      }
-      
-      // Radial contract + elastic rebound tied to thrust
-      float topCurve = 1.0 - verticalProgression * 0.5; // top responds a bit more
-      float rimCurve = 0.4 + verticalProgression * 0.6; // rim drives the push
-      float radialContract = lerp(1.0, 0.72, contraction * rimCurve);
-      float radialRebound = rebound * 0.14 * rimCurve;
-      float baseBreath = lerp(1.3, 0.7, contraction);
-      float localBreath = baseBreath * (radialContract + radialRebound);
-
-      // Vertical compression during contraction + slight rebound
-      float verticalSqueeze = lerp(1.0, 0.92, contraction * topCurve);
-      verticalSqueeze += rebound * 0.04 * topCurve;
-
-      // Thrust-linked snap up, elastic settle down
-      float localPulse = (contractCurve * 8.0 - rebound * 5.0) * (0.5 + 0.5 * topCurve);
-
-      float px = q * localBreath;
-      float py = pyVal * verticalSqueeze;
-
-      int segmentIndex = int(verticalProgression * (g.segmentos.size() - 1));
-      Segmento seg = g.segmentos.get(segmentIndex);
-      float segmentProgression = (verticalProgression * (g.segmentos.size() - 1)) - segmentIndex;
-      float x, y;
-
-      if (segmentIndex < g.segmentos.size() - 1) {
-        Segmento nextSeg = g.segmentos.get(segmentIndex + 1);
-        x = lerp(seg.x, nextSeg.x, segmentProgression);
-        y = lerp(seg.y, nextSeg.y, segmentProgression);
-      } else {
-        x = seg.x;
-        y = seg.y;
-      }
-
-      float pulseOffset = localPulse * (0.5 - verticalProgression);
+      float px = localPxBuffer[idx];
+      float localY = localPyBuffer[idx];
+      float x = worldXBuffer[idx];
+      float y = worldYBuffer[idx];
       float vx = px - centerX + x + finalAlignDx;
-      float vy = py + pulseOffset - centerY + y + finalAlignDy;
+      float vy = localY - centerY + y + finalAlignDy;
       pg.vertex(vx, vy);
       sumWorldX += vx;
       sumWorldY += vy;

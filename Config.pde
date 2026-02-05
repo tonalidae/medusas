@@ -54,7 +54,7 @@ float remoteSmoothY = -1000;
 
 // --- VOLUMETRIC INTERACTION VARS ---
 // Hand tracking configuration
-final int MAX_HANDS = 6;              // persistent slots 0..5
+final int MAX_HANDS = 4;              // persistent slots 0..5
 final int HAND_POINTS_PER_HAND = 6;   // keep legacy per-hand stride
 // Stores previous positions for up to MAX_HANDS × HAND_POINTS_PER_HAND points
 PVector[] prevHandPoints = new PVector[MAX_HANDS * HAND_POINTS_PER_HAND];
@@ -86,7 +86,7 @@ int tapLastUpdateMs = 0;
 int tapLastTriggerMs = -9999;
 float TAP_DECAY_PER_SEC = 1.5;      // how fast tapScore decays without taps
 int TAP_FEAR_THR = 6;               // taps within window to scare
-int TAP_AGG_THR = 12;               // taps within window to anger
+int TAP_AGG_THR = 6;                // taps within window to anger (50% easier via Kinect taps)
 int TAP_TRIGGER_COOLDOWN_MS = 2500; // cooldown after forcing a mood burst
 boolean prevMouseDown = false;      // edge detect mouse taps
 
@@ -113,6 +113,10 @@ float handUserSpeed = 0;
 float handUserEnergy = 0; // normalized 0..1 (from arm energy)
 float handUserDepth = 0;  // raw depth (z) from /hands
 float handDepthPress = 0; // 0..1 depth pressure (near = 1)
+// Per-hand press data for multi-hand water interaction
+float[] handSlotX = new float[MAX_HANDS];
+float[] handSlotY = new float[MAX_HANDS];
+float[] handSlotPress = new float[MAX_HANDS];
 float userX = -1000;
 float userY = -1000;
 float userSpeed = 0;
@@ -134,9 +138,9 @@ float HAND_DEPTH_LAYER_STRENGTH = 0.55;
 float HAND_DEPTH_INTENSITY_BOOST = 0.8;  // wake strength boost when close to screen
 
 // --- Kinect aggression detection (no click) ---
-float USER_AGG_SPEED_THR = 4.5;     // px/frame quick motion
-float USER_AGG_ENERGY_THR = 0.45;   // normalized energy
-float USER_AGG_DEPTH_THR = 0.35;    // closeness to screen (0..1)
+float USER_AGG_SPEED_THR = 6.75;    // px/frame quick motion (less sensitive)
+float USER_AGG_ENERGY_THR = 0.675;  // normalized energy (less sensitive)
+float USER_AGG_DEPTH_THR = 0.525;   // closeness to screen (0..1, less sensitive)
 int USER_AGG_COOLDOWN_MS = 900;     // throttle aggressive scare events
 float USER_AGG_FEAR_RADIUS = 300;   // radius to scare nearby jellies
 float USER_AGG_FIELD_SCALE = 1.2;   // mood field splat scale

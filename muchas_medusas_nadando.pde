@@ -124,6 +124,11 @@ void draw() {
     handUserEnergy = 0;
     handUserDepth = 0;
     handDepthPress = 0;
+    for (int h = 0; h < MAX_HANDS; h++) {
+      handSlotX[h] = -1000;
+      handSlotY[h] = -1000;
+      handSlotPress[h] = 0;
+    }
     // Reset points so the next touch doesn't create a "teleport" splash
     for(int i=0; i<prevHandPoints.length; i++) {
       prevHandPoints[i] = null;
@@ -1268,6 +1273,9 @@ void processHandSamples(int[] slots, float[] xs, float[] ys, float[] zs, boolean
     float energyN = constrain(handArmEnergy[h] / ARM_ENERGY_MAX, 0.0, 1.0);
     float energyBoost = lerp(1.0, 1.0 + ARM_ENERGY_WAKE_BOOST, energyN);
     float depthPress = hasDepth ? constrain(map(depth, 0.4, -0.2, 0.0, 1.0), 0.0, 1.0) : 0.0;
+    handSlotX[h] = x;
+    handSlotY[h] = y;
+    handSlotPress[h] = depthPress;
     float depthBoost = lerp(1.0, 1.0 + HAND_DEPTH_INTENSITY_BOOST, depthPress);
     used[pointIndex] = true;
 
@@ -1320,6 +1328,9 @@ void processHandSamples(int[] slots, float[] xs, float[] ys, float[] zs, boolean
       prevHandPoints[pointIndex] = null;
       prevHandDepth[pointIndex] = 0;
       handSizes[h] = 0;
+      handSlotX[h] = -1000;
+      handSlotY[h] = -1000;
+      handSlotPress[h] = 0;
     }
   }
   for (int j = 0; j < prevHandPoints.length; j++) {
@@ -1502,84 +1513,98 @@ void processHandSamples(int[] slots, float[] xs, float[] ys, float[] zs, boolean
 
 void oscEvent(OscMessage msg) {
   boolean handled = false;
+  try {
 
-  if (msg.checkAddrPattern("/hand_size")) {
-    Object[] args = msg.arguments();
-    if (args != null) {
-      int n = min(MAX_HANDS, args.length);
-      for (int i = 0; i < n; i++) {
-        handSizes[i] = msg.get(i).floatValue();
+    if (msg.checkAddrPattern("/hand_size")) {
+      Object[] args = msg.arguments();
+      if (args != null) {
+        int n = min(MAX_HANDS, args.length);
+        for (int i = 0; i < n; i++) {
+          handSizes[i] = oscFloat(msg, i, 0);
+        }
       }
-    }
-  } else if (msg.checkAddrPattern("/arm_energy")) {
-    Object[] args = msg.arguments();
-    if (args != null) {
-      int n = min(MAX_HANDS, args.length);
-      for (int i = 0; i < n; i++) {
-        float v = max(0, msg.get(i).floatValue());
-        handArmEnergy[i] = lerp(handArmEnergy[i], v, ARM_ENERGY_SMOOTH);
+    } else if (msg.checkAddrPattern("/arm_energy")) {
+      Object[] args = msg.arguments();
+      if (args != null) {
+        int n = min(MAX_HANDS, args.length);
+        for (int i = 0; i < n; i++) {
+          float v = max(0, oscFloat(msg, i, 0));
+          handArmEnergy[i] = lerp(handArmEnergy[i], v, ARM_ENERGY_SMOOTH);
+        }
       }
-    }
-  } else if (msg.checkAddrPattern("/hands")) {
-    Object[] args = msg.arguments();
-    if (args != null && args.length >= 4) {
-      int slotCount = min(MAX_HANDS, args.length / 4);
-      int[] slots = new int[slotCount];
-      float[] xs = new float[slotCount];
-      float[] ys = new float[slotCount];
-      float[] zs = new float[slotCount];
-      boolean[] presentSlots = new boolean[MAX_HANDS];
-      int sampleCount = 0;
-      for (int i = 0; i < slotCount; i++) {
-        float present = msg.get(i * 4).floatValue();
-        presentSlots[i] = present >= 0.5;
-        if (presentSlots[i]) {
-          slots[sampleCount] = i;
-          xs[sampleCount] = msg.get(i * 4 + 1).floatValue();
-          ys[sampleCount] = msg.get(i * 4 + 2).floatValue();
-          zs[sampleCount] = msg.get(i * 4 + 3).floatValue();
+    } else if (msg.checkAddrPattern("/hands")) {
+      Object[] args = msg.arguments();
+      if (args != null && args.length >= 4) {
+        int slotCount = min(MAX_HANDS, args.length / 4);
+        int[] slots = new int[slotCount];
+        float[] xs = new float[slotCount];
+        float[] ys = new float[slotCount];
+        float[] zs = new float[slotCount];
+        boolean[] presentSlots = new boolean[MAX_HANDS];
+        int sampleCount = 0;
+        for (int i = 0; i < slotCount; i++) {
+          float present = oscFloat(msg, i * 4, 0);
+          presentSlots[i] = present >= 0.5;
+          if (presentSlots[i]) {
+            slots[sampleCount] = i;
+            xs[sampleCount] = oscFloat(msg, i * 4 + 1, 0);
+            ys[sampleCount] = oscFloat(msg, i * 4 + 2, 0);
+            zs[sampleCount] = oscFloat(msg, i * 4 + 3, 0);
+            sampleCount++;
+          }
+        }
+        processHandSamples(slots, xs, ys, zs, presentSlots, sampleCount, true);
+        handled = true;
+      }
+    } else if (msg.checkAddrPattern("/hand")) {
+      Object[] args = msg.arguments();
+      if (args != null && args.length >= 2) {
+        boolean tripletMode = (args.length % 3 == 0);
+        int totalGroups = tripletMode ? args.length / 3 : args.length / 2;
+        int groupsPerHand = (totalGroups % 6 == 0) ? 6 : 1;
+        int numHands = min(MAX_HANDS, totalGroups / groupsPerHand);
+        int[] slots = new int[numHands];
+        float[] xs = new float[numHands];
+        float[] ys = new float[numHands];
+        float[] zs = new float[numHands];
+        boolean[] presentSlots = new boolean[MAX_HANDS];
+        int sampleCount = 0;
+
+        for (int h = 0; h < numHands; h++) {
+          int argIdx;
+          if (groupsPerHand == 6) {
+            argIdx = (h * groupsPerHand + 1) * (tripletMode ? 3 : 2);
+          } else {
+            argIdx = h * (tripletMode ? 3 : 2);
+          }
+          if (argIdx + (tripletMode ? 2 : 1) >= args.length) break;
+          slots[sampleCount] = h;
+          xs[sampleCount] = oscFloat(msg, argIdx, 0);
+          ys[sampleCount] = oscFloat(msg, argIdx + 1, 0);
+          zs[sampleCount] = tripletMode ? oscFloat(msg, argIdx + 2, 0) : 0.0;
+          presentSlots[h] = true;
           sampleCount++;
         }
+        processHandSamples(slots, xs, ys, zs, presentSlots, sampleCount, tripletMode);
+        handled = true;
       }
-      processHandSamples(slots, xs, ys, zs, presentSlots, sampleCount, true);
-      handled = true;
     }
-  } else if (msg.checkAddrPattern("/hand")) {
-    Object[] args = msg.arguments();
-    if (args != null && args.length >= 2) {
-      boolean tripletMode = (args.length % 3 == 0);
-      int totalGroups = tripletMode ? args.length / 3 : args.length / 2;
-      int groupsPerHand = (totalGroups % 6 == 0) ? 6 : 1;
-      int numHands = min(MAX_HANDS, totalGroups / groupsPerHand);
-      int[] slots = new int[numHands];
-      float[] xs = new float[numHands];
-      float[] ys = new float[numHands];
-      float[] zs = new float[numHands];
-      boolean[] presentSlots = new boolean[MAX_HANDS];
-      int sampleCount = 0;
 
-      for (int h = 0; h < numHands; h++) {
-        int argIdx;
-        if (groupsPerHand == 6) {
-          argIdx = (h * groupsPerHand + 1) * (tripletMode ? 3 : 2);
-        } else {
-          argIdx = h * (tripletMode ? 3 : 2);
-        }
-        if (argIdx + (tripletMode ? 2 : 1) >= args.length) break;
-        slots[sampleCount] = h;
-        xs[sampleCount] = msg.get(argIdx).floatValue();
-        ys[sampleCount] = msg.get(argIdx + 1).floatValue();
-        zs[sampleCount] = tripletMode ? msg.get(argIdx + 2).floatValue() : 0.0;
-        presentSlots[h] = true;
-        sampleCount++;
-      }
-      processHandSamples(slots, xs, ys, zs, presentSlots, sampleCount, tripletMode);
-      handled = true;
+    if (handled) {
+      tapDecayPerSec = handPresent ? TAP_DECAY_PER_SEC_ACTIVE : TAP_DECAY_PER_SEC_IDLE;
+      maybeTriggerTapMood();
     }
+  } catch (Exception e) {
+    String addr = (msg != null) ? msg.addrPattern() : "(null)";
+    int argc = (msg != null && msg.arguments() != null) ? msg.arguments().length : -1;
+    println("[OSC] oscEvent error addr=" + addr + " argc=" + argc + " : " + e);
   }
+}
 
-  if (handled) {
-    tapDecayPerSec = handPresent ? TAP_DECAY_PER_SEC_ACTIVE : TAP_DECAY_PER_SEC_IDLE;
-    maybeTriggerTapMood();
+float oscFloat(OscMessage msg, int idx, float fallback) {
+  try {
+    return msg.get(idx).floatValue();
+  } catch (Exception e) {
+    return fallback;
   }
 }
