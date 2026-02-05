@@ -39,9 +39,243 @@ float userTouchStrength = 0;
 float USER_TOUCH_DECAY = 0.97;   // Slower decay so interaction trails last longer
 float USER_FLOW_SMOOTH = 0.18;
 
+// Water particle connection system
+class WaterParticle {
+  float x, y;
+  float vx, vy;
+  float lifespan;
+  float maxLife;
+  float size;
+  float cpx, cpy; // Cached bezier control point
+  int gridCellX, gridCellY; // Spatial partitioning cell
+  
+  WaterParticle(float x_, float y_) {
+    x = x_;
+    y = y_;
+    vx = random(-0.5, 0.5);
+    vy = random(-0.5, 0.5);
+    maxLife = random(60, 90);
+    lifespan = maxLife;
+    size = 1.0;
+    // Pre-calculate control point for bezier curve
+    cpx = x + random(-15, 15);
+    cpy = y + random(-15, 15);
+  }
+  
+  void update(float flowX, float flowY) {
+    // Respond to wake flow
+    vx += flowX * 0.05;
+    vy += flowY * 0.05;
+    
+    // Add drag
+    vx *= 0.98;
+    vy *= 0.98;
+    
+    // Move
+    x += vx;
+    y += vy;
+    
+    // Wrap edges
+    if (x < 0 || x > width) vx *= -1;
+    if (y < 0 || y > height) vy *= -1;
+    x = constrain(x, 0, width);
+    y = constrain(y, 0, height);
+    
+    // Update spatial grid cell
+    gridCellX = int(x / PARTICLE_GRID_CELL_SIZE);
+    gridCellY = int(y / PARTICLE_GRID_CELL_SIZE);
+    gridCellX = constrain(gridCellX, 0, PARTICLE_GRID_WIDTH - 1);
+    gridCellY = constrain(gridCellY, 0, PARTICLE_GRID_HEIGHT - 1);
+    
+    // Update control point slightly for subtle animation
+    cpx += random(-2, 2);
+    cpy += random(-2, 2);
+    
+    // Fade over time
+    lifespan -= 1.0;
+    
+    // Expand as fading (inverse of lifespan)
+    float lifeFraction = lifespan / maxLife;
+    size = map(lifeFraction, 1.0, 0.0, 1.0, 3.5);
+  }
+  
+  boolean isDead() {
+    return lifespan <= 0;
+  }
+  
+  float getAlpha() {
+    return constrain(lifespan, 0, 255);
+  }
+}
+
+ArrayList<WaterParticle> waterParticles = new ArrayList<WaterParticle>();
+int MAX_WATER_PARTICLES = 60;
+float WATER_PARTICLE_CONNECT_DIST = 120;
+float WATER_PARTICLE_MAX_RADIUS = 60;
+// Performance optimization: spatial partitioning grid
+int PARTICLE_GRID_CELL_SIZE = 150; // Size of each grid cell
+int PARTICLE_GRID_WIDTH = 0;
+int PARTICLE_GRID_HEIGHT = 0;
+ArrayList<WaterParticle>[][] particleGrid; // Spatial grid for fast neighbor lookup
+float PARTICLE_ALPHA_LOD_THRESHOLD = 30; // Skip rendering particles fainter than this
+
 void initWakeGrid() {
   wake = new float[gridW][gridH];
   wakeNext = new float[gridW][gridH];
+  
+  // Initialize particle spatial grid
+  PARTICLE_GRID_WIDTH = max(1, int(width / PARTICLE_GRID_CELL_SIZE) + 1);
+  PARTICLE_GRID_HEIGHT = max(1, int(height / PARTICLE_GRID_CELL_SIZE) + 1);
+  particleGrid = new ArrayList[PARTICLE_GRID_WIDTH][PARTICLE_GRID_HEIGHT];
+  for (int x = 0; x < PARTICLE_GRID_WIDTH; x++) {
+    for (int y = 0; y < PARTICLE_GRID_HEIGHT; y++) {
+      particleGrid[x][y] = new ArrayList<WaterParticle>();
+    }
+  }
+}
+
+void updateWaterParticles() {
+  // Clear spatial grid
+  for (int x = 0; x < PARTICLE_GRID_WIDTH; x++) {
+    for (int y = 0; y < PARTICLE_GRID_HEIGHT; y++) {
+      particleGrid[x][y].clear();
+    }
+  }
+  
+  // Remove dead particles and update grid
+  for (int i = waterParticles.size() - 1; i >= 0; i--) {
+    WaterParticle p = waterParticles.get(i);
+    if (p.isDead()) {
+      waterParticles.remove(i);
+    } else {
+      float gx = map(p.x, 0, width, 0, gridW - 1);
+      float gy = map(p.y, 0, height, 0, gridH - 1);
+      sampleFlowGridAt(gx, gy, flowScratch);
+      p.update(flowScratch.x, flowScratch.y);
+      
+      // Add to spatial grid
+      if (p.gridCellX >= 0 && p.gridCellX < PARTICLE_GRID_WIDTH &&
+          p.gridCellY >= 0 && p.gridCellY < PARTICLE_GRID_HEIGHT) {
+        particleGrid[p.gridCellX][p.gridCellY].add(p);
+      }
+    }
+  }
+}
+
+void spawnWaterParticles(float x, float y, int count) {
+  for (int i = 0; i < count; i++) {
+    if (waterParticles.size() >= MAX_WATER_PARTICLES) break;
+    float px = x + random(-30, 30);
+    float py = y + random(-30, 30);
+    waterParticles.add(new WaterParticle(px, py));
+  }
+}
+
+void drawWaterParticleConnections() {
+  if (waterParticles.size() == 0) return;
+  
+  pushStyle();
+  noFill();
+  
+  // Draw curved organic connections using spatial grid (only check nearby particles)
+  for (WaterParticle p : waterParticles) {
+    float alpha = p.getAlpha();
+    
+    // Skip rendering faint particles (LOD)
+    if (alpha < PARTICLE_ALPHA_LOD_THRESHOLD) continue;
+    
+    // Check only particles in adjacent grid cells
+    int cellX = p.gridCellX;
+    int cellY = p.gridCellY;
+    
+    for (int dx = -1; dx <= 1; dx++) {
+      for (int dy = -1; dy <= 1; dy++) {
+        int nx = cellX + dx;
+        int ny = cellY + dy;
+        
+        if (nx >= 0 && nx < PARTICLE_GRID_WIDTH && ny >= 0 && ny < PARTICLE_GRID_HEIGHT) {
+          for (WaterParticle other : particleGrid[nx][ny]) {
+            if (p == other) continue;
+            
+            float d = dist(p.x, p.y, other.x, other.y);
+            if (d < WATER_PARTICLE_CONNECT_DIST) {
+              // Use minimum alpha from both particles for natural fade
+              float particleAlpha = min(alpha, other.getAlpha()) / 255.0;
+              
+              // Sample wake at connection point for color
+              float wakeValue = sampleWakeAt(p.x, p.y);
+              float hue = map(wakeValue, 0, 1, 200, 240);
+              
+              // Connection strength based on distance
+              float connectionAlpha = map(d, 0, WATER_PARTICLE_CONNECT_DIST, 40, 5);
+              connectionAlpha *= constrain(wakeValue * 2, 0.5, 1.5);
+              connectionAlpha *= particleAlpha * 0.6;
+              
+              // Draw curved bezier connection with cached control point
+              stroke(hue, 210, 255, connectionAlpha);
+              strokeWeight(1.2);
+              
+              // Use particle's cached control point (animated subtly each frame)
+              bezier(p.x, p.y, p.cpx, p.cpy, p.cpx, p.cpy, other.x, other.y);
+            }
+          }
+        }
+      }
+    }
+  }
+  
+  // Draw expanding ripple rings with color gradients
+  for (WaterParticle p : waterParticles) {
+    float alpha = p.getAlpha();
+    
+    // Skip rendering very faint particles (LOD optimization)
+    if (alpha < PARTICLE_ALPHA_LOD_THRESHOLD) continue;
+    
+    float lifeFraction = p.lifespan / p.maxLife;
+    
+    // Expand outward as particle ages (inverse of lifespan)
+    float expansionRadius = map(lifeFraction, 1.0, 0.0, 5, 80);
+    
+    // Fade out as it expands
+    float adjustedAlpha = alpha * 0.6;
+    
+    // Bright luminous core when young
+    if (lifeFraction > 0.5) {
+      float coreAlpha = adjustedAlpha * map(lifeFraction, 0.5, 1.0, 0, 1.4);
+      fill(220, 240, 255, coreAlpha * 1.2);
+      noStroke();
+      ellipse(p.x, p.y, expansionRadius * 0.3, expansionRadius * 0.3);
+    }
+    
+    // Color gradient: cyan → blue → purple as rings expand
+    // Inner bright ring (cyan)
+    noFill();
+    float innerHue = map(lifeFraction, 1.0, 0.0, 180, 210); // cyan to blue
+    stroke(innerHue, 220, 255, adjustedAlpha * 0.8);
+    strokeWeight(2.5);
+    ellipse(p.x, p.y, expansionRadius * 2, expansionRadius * 2);
+    
+    // Mid ring (transitioning)
+    float midHue = map(lifeFraction, 1.0, 0.0, 200, 240); // blue to purple
+    stroke(midHue, 200, 255, adjustedAlpha * 0.5);
+    strokeWeight(2);
+    ellipse(p.x, p.y, expansionRadius * 2.3, expansionRadius * 2.3);
+    
+    // Outer faint ring (fading purple)
+    float outerHue = map(lifeFraction, 1.0, 0.0, 220, 280); // purple
+    stroke(outerHue, 180, 240, adjustedAlpha * 0.25);
+    strokeWeight(1.2);
+    ellipse(p.x, p.y, expansionRadius * 2.6, expansionRadius * 2.6);
+    
+    // Subtle additional glow ring for bloom effect
+    if (enableBloom && adjustedAlpha > 50) {
+      stroke(innerHue + 10, 255, 255, adjustedAlpha * 0.15);
+      strokeWeight(3);
+      ellipse(p.x, p.y, expansionRadius * 1.8, expansionRadius * 1.8);
+    }
+  }
+  
+  popStyle();
 }
 
 int gridX(float x) {
@@ -62,6 +296,13 @@ void depositWakePoint(float x, float y, float amount) {
 
 void depositWakeBlob(float x, float y, float radius, float amount) {
   recordUserImpact(x, y, amount);
+  
+  // Spawn particles proportional to disturbance
+  if (useWaterParticles && amount > 1.0) {
+    int count = int(map(amount, 1, 3, 1, 3));
+    spawnWaterParticles(x, y, count);
+  }
+  
   radius *= wakeBlobRadiusScale; // globally enlarge deposits for a heavier fluid feel
   int gx = gridX(x);
   int gy = gridY(y);

@@ -106,6 +106,10 @@ class GusanoRender {
   }
 
   void dibujarForma() {
+    dibujarForma(getGraphics());
+  }
+  
+  void dibujarForma(PGraphics pg) {
     float rimWeight = 1.2;
     color rimColor = g.currentColor;
     switch(g.state) {
@@ -129,8 +133,8 @@ class GusanoRender {
         rimColor = lerpColor(rimColor, color(200, 180, 240, 120), 0.25);
         break;
     }
-    stroke(rimColor);
-    strokeWeight(rimWeight);
+    pg.stroke(rimColor);
+    pg.strokeWeight(rimWeight);
     // Recentering: compute local centroid so deformation stays centered on physics
     float centerX = 0;
     float centerY = 0;
@@ -232,7 +236,7 @@ class GusanoRender {
     sumWorldX = 0;
     sumWorldY = 0;
     int worldCount = 0;
-    beginShape(POINTS);
+    pg.beginShape(POINTS);
     for (int idx = 0; idx < POINT_COUNT; idx++) {
       float k = cache.k[idx];
       float d = cache.d[idx];
@@ -291,33 +295,33 @@ class GusanoRender {
       float pulseOffset = localPulse * (0.5 - verticalProgression);
       float vx = px - centerX + x + finalAlignDx;
       float vy = py + pulseOffset - centerY + y + finalAlignDy;
-      vertex(vx, vy);
+      pg.vertex(vx, vy);
       sumWorldX += vx;
       sumWorldY += vy;
       worldCount++;
     }
-    endShape();
+    pg.endShape();
 
     if (debugJellyMotion && worldCount > 0) {
       float cx = sumWorldX / worldCount;
       float cy = sumWorldY / worldCount;
-      pushStyle();
-      stroke(255, 60, 60, 200);
-      strokeWeight(6);
-      point(cx, cy);
-      stroke(0, 180, 80, 180);
-      strokeWeight(4);
-      point(g.segmentos.get(0).x, g.segmentos.get(0).y);
-      stroke(0, 120, 200, 140);
-      line(g.segmentos.get(0).x, g.segmentos.get(0).y, cx, cy);
-      popStyle();
+      pg.pushStyle();
+      pg.stroke(255, 60, 60, 200);
+      pg.strokeWeight(6);
+      pg.point(cx, cy);
+      pg.stroke(0, 180, 80, 180);
+      pg.strokeWeight(4);
+      pg.point(g.segmentos.get(0).x, g.segmentos.get(0).y);
+      pg.stroke(0, 120, 200, 140);
+      pg.line(g.segmentos.get(0).x, g.segmentos.get(0).y, cx, cy);
+      pg.popStyle();
     }
 
     if (showHead) {
-      stroke(0, 200);
-      strokeWeight(4);
-      point(g.segmentos.get(0).x, g.segmentos.get(0).y);
-      strokeWeight(1);
+      pg.stroke(0, 200);
+      pg.strokeWeight(4);
+      pg.point(g.segmentos.get(0).x, g.segmentos.get(0).y);
+      pg.strokeWeight(1);
     }
   }
 }

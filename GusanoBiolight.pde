@@ -133,7 +133,7 @@ class GusanoBiolight {
     emissionSpatial *= (1.0 + 1.2 * photophore); // Photophores boost
     
     // Temporal modulation
-    float emit = glowIntensity * BIOLIGHT_GLOBAL_INTENSITY;
+    float emit = glowIntensity * BIOLIGHT_GLOBAL_INTENSITY * g.biolightPersonality;
     emit *= lerp(1.0, 1.0 + heartbeatBoost, heartbeat);
     emit *= (1.0 + pulseBoost * pulseSync);
     emit *= emissionSpatial;
@@ -290,11 +290,15 @@ class GusanoBiolight {
   // ============================================================
   
   void render() {
+    render(getGraphics());
+  }
+  
+  void render(PGraphics pg) {
     if (!useBioluminescence) return;
     
-    pushStyle();
-    blendMode(ADD); // Additive blending for glow
-    noStroke();
+    pg.pushStyle();
+    pg.blendMode(ADD); // Additive blending for glow
+    pg.noStroke();
     
     // Update colors based on current mood (smooth transition)
     color targetBaseColor = g.mood.paletteForState(g.state, g.moodHeat);
@@ -309,19 +313,19 @@ class GusanoBiolight {
     float finalAlignDy = alignment[3];
     
     // Pass A: Outer water scattering bloom (widest, faintest)
-    renderBloomPass(centerX, centerY, finalAlignDx, finalAlignDy);
+    renderBloomPass(pg, centerX, centerY, finalAlignDx, finalAlignDy);
     
     // Pass B: Emissive body glow (tight, colored)
-    renderEmissivePass(centerX, centerY, finalAlignDx, finalAlignDy);
+    renderEmissivePass(pg, centerX, centerY, finalAlignDx, finalAlignDy);
     
     // Pass C: Rim light enhancement
-    renderRimPass(centerX, centerY, finalAlignDx, finalAlignDy);
+    renderRimPass(pg, centerX, centerY, finalAlignDx, finalAlignDy);
     
     // Pass D: Specular sparkle glints
-    renderGlintPass(centerX, centerY, finalAlignDx, finalAlignDy);
+    renderGlintPass(pg, centerX, centerY, finalAlignDx, finalAlignDy);
     
-    blendMode(BLEND);
-    popStyle();
+    pg.blendMode(BLEND);
+    pg.popStyle();
   }
   
   // Compute alignment similar to GusanoRender
@@ -448,7 +452,7 @@ class GusanoBiolight {
     return new float[]{centerX, centerY, finalAlignDx, finalAlignDy};
   }
   
-  void renderBloomPass(float centerX, float centerY, float alignDx, float alignDy) {
+  void renderBloomPass(PGraphics pg, float centerX, float centerY, float alignDx, float alignDy) {
     // Velocity for trailing effect
     PVector velNorm = g.vel.copy();
     float speed = velNorm.mag();
@@ -481,13 +485,13 @@ class GusanoBiolight {
         
         if (a < 2) continue; // Skip nearly invisible points
         
-        fill(red(layerColor), green(layerColor), blue(layerColor), a);
-        ellipse(x, y, radius * 2, radius * 2);
+        pg.fill(red(layerColor), green(layerColor), blue(layerColor), a);
+        pg.ellipse(x, y, radius * 2, radius * 2);
       }
     }
   }
   
-  void renderEmissivePass(float centerX, float centerY, float alignDx, float alignDy) {
+  void renderEmissivePass(PGraphics pg, float centerX, float centerY, float alignDx, float alignDy) {
     // Core emission: tighter, more saturated
     float radius = 1.8 * lerp(0.9, 1.1, g.sizeFactor);
     int sampleStep = 4;
@@ -501,12 +505,12 @@ class GusanoBiolight {
       
       if (a < 3) continue;
       
-      fill(red(baseGlowColor), green(baseGlowColor), blue(baseGlowColor), a);
-      ellipse(pd.worldX, pd.worldY, radius * 2, radius * 2);
+      pg.fill(red(baseGlowColor), green(baseGlowColor), blue(baseGlowColor), a);
+      pg.ellipse(pd.worldX, pd.worldY, radius * 2, radius * 2);
     }
   }
   
-  void renderRimPass(float centerX, float centerY, float alignDx, float alignDy) {
+  void renderRimPass(PGraphics pg, float centerX, float centerY, float alignDx, float alignDy) {
     // Enhanced rim lighting for silhouette pop
     float radius = 2.5 * lerp(0.9, 1.1, g.sizeFactor);
     color rimColor = lerpColor(baseGlowColor, color(220, 240, 255, 120), 0.3);
@@ -525,12 +529,12 @@ class GusanoBiolight {
       
       if (a < 3) continue;
       
-      fill(red(rimColor), green(rimColor), blue(rimColor), a);
-      ellipse(pd.worldX, pd.worldY, radius * 2, radius * 2);
+      pg.fill(red(rimColor), green(rimColor), blue(rimColor), a);
+      pg.ellipse(pd.worldX, pd.worldY, radius * 2, radius * 2);
     }
   }
   
-  void renderGlintPass(float centerX, float centerY, float alignDx, float alignDy) {
+  void renderGlintPass(PGraphics pg, float centerX, float centerY, float alignDx, float alignDy) {
     // Sparse, bright specular sparkles
     color glintColor = lerpColor(baseGlowColor, color(255, 255, 255, 200), 0.7);
     int sampleStep = 8;
@@ -555,8 +559,8 @@ class GusanoBiolight {
       
       if (a < 15) continue; // Skip dim glints
       
-      fill(red(glintColor), green(glintColor), blue(glintColor), a);
-      ellipse(pd.worldX, pd.worldY, glintRadius * 2, glintRadius * 2);
+      pg.fill(red(glintColor), green(glintColor), blue(glintColor), a);
+      pg.ellipse(pd.worldX, pd.worldY, glintRadius * 2, glintRadius * 2);
     }
   }
 }
