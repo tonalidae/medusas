@@ -11,7 +11,7 @@ float userDeposit = 3.0;
 float wakeClamp = 16.0;          // Higher cap so dense wakes can accumulate before clipping
 float wakeTension = 0.06;       // Surface-tension style curvature feedback (0 = off)
 float wakeCurlStrength = 0.12;  // Small rotational kick to keep ripples swirling
-float wakeBlobRadiusScale = 1.5; // Enlarge deposits to feel more viscous
+float wakeBlobRadiusScale = 1.0; // Enlarge deposits to feel more viscous
 
 // Flow shaping
 float swirlStrength = 0.6;

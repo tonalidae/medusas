@@ -77,7 +77,7 @@ float HAND_FAR_THR = 0.035;
 float HAND_PROX_ALPHA = 0.2;
 boolean HAND_FLIP_X = true;    // Flip horizontal when camera faces the screen
 boolean HAND_FLIP_Y = false;   // Set true if camera is upside-down
-float HAND_Y_OFFSET_PX = 40;   // positive = shift hand down to match water render
+float HAND_Y_OFFSET_PX =50;   // positive = shift hand down to match water render
 
 int HAND_TIMEOUT_MS = 1000;
 
