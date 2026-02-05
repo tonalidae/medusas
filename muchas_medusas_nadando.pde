@@ -15,7 +15,7 @@ float armWakeScaleForHand(int h) {
 }
 
 void setup() {
-  size(1280, 800, P2D);
+  fullScreen(P2D);
   updateClampMargins(); // initialize invisible box once size is known
   // Use a simple per-frame background clear instead of a pre-rendered gradient.
   oscP5 = new OscP5(this, 12000);
