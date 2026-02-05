@@ -12,7 +12,7 @@ class Program
 	const int OSC_PORT = 12000;
 
 	// ===== TRACKING CONFIG =====
-	const int MAX_HANDS = 6;               // must match Processing MAX_HANDS
+	const int MAX_HANDS = 4;               // must match Processing MAX_HANDS
 	const int ACTIVE_HAND_SLOTS = 4;       // 2 people * 2 hands
 	const int MAX_PEOPLE = 2;              // Kinect v1: 2 tracked skeletons
 	const int SLOT_MISS_FORGET = 12;       // frames until a slot is cleared
@@ -29,10 +29,10 @@ class Program
 	const bool FLIP_X = false;
 	const bool FLIP_Y = false;
 
-    static KinectSensor sensor;
-    static OscSender osc;
-    static DateTime lastStatusLog = DateTime.MinValue;
-    static DateTime lastHandLog = DateTime.MinValue;
+	static KinectSensor sensor;
+	static OscSender osc;
+	static DateTime lastStatusLog = DateTime.MinValue;
+	static DateTime lastHandLog = DateTime.MinValue;
 
 	// Person slot: stable assignment by TrackingId
 	class PersonSlot
@@ -102,32 +102,32 @@ class Program
 			var skeletons = new Skeleton[frame.SkeletonArrayLength];
 			frame.CopySkeletonDataTo(skeletons);
 
-            var tracked = skeletons
-                .Where(s => s != null && s.TrackingState == SkeletonTrackingState.Tracked)
-                .ToList();
+			var tracked = skeletons
+				.Where(s => s != null && s.TrackingState == SkeletonTrackingState.Tracked)
+				.ToList();
 
-            // Status log (1 Hz): how many bodies are fully tracked vs position-only
-            var now = DateTime.UtcNow;
-            if ((now - lastStatusLog).TotalSeconds >= 1.0)
-            {
-                int trackedCount = skeletons.Count(s => s != null && s.TrackingState == SkeletonTrackingState.Tracked);
-                int posOnlyCount = skeletons.Count(s => s != null && s.TrackingState == SkeletonTrackingState.PositionOnly);
-                int notTrackedCount = skeletons.Count(s => s != null && s.TrackingState == SkeletonTrackingState.NotTracked);
-                Console.WriteLine($"[Kinect] Tracked={trackedCount} PositionOnly={posOnlyCount} NotTracked={notTrackedCount}");
-                lastStatusLog = now;
-            }
+			// Status log (1 Hz): how many bodies are fully tracked vs position-only
+			var now = DateTime.UtcNow;
+			if ((now - lastStatusLog).TotalSeconds >= 1.0)
+			{
+				int trackedCount = skeletons.Count(s => s != null && s.TrackingState == SkeletonTrackingState.Tracked);
+				int posOnlyCount = skeletons.Count(s => s != null && s.TrackingState == SkeletonTrackingState.PositionOnly);
+				int notTrackedCount = skeletons.Count(s => s != null && s.TrackingState == SkeletonTrackingState.NotTracked);
+				Console.WriteLine($"[Kinect] Tracked={trackedCount} PositionOnly={posOnlyCount} NotTracked={notTrackedCount}");
+				lastStatusLog = now;
+			}
 
-            // Hand joint tracking log (1 Hz) for tracked bodies
-            if ((now - lastHandLog).TotalSeconds >= 1.0)
-            {
-                foreach (var sk in tracked)
-                {
-                    var lh = sk.Joints[JointType.HandLeft].TrackingState;
-                    var rh = sk.Joints[JointType.HandRight].TrackingState;
-                    Console.WriteLine($"[Kinect] id={sk.TrackingId} LH={lh} RH={rh}");
-                }
-                lastHandLog = now;
-            }
+			// Hand joint tracking log (1 Hz) for tracked bodies
+			if ((now - lastHandLog).TotalSeconds >= 1.0)
+			{
+				foreach (var sk in tracked)
+				{
+					var lh = sk.Joints[JointType.HandLeft].TrackingState;
+					var rh = sk.Joints[JointType.HandRight].TrackingState;
+					Console.WriteLine($"[Kinect] id={sk.TrackingId} LH={lh} RH={rh}");
+				}
+				lastHandLog = now;
+			}
 
 			// Update person slots (stable by TrackingId + miss tolerance)
 			UpdatePersonSlots(tracked);
